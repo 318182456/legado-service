@@ -70,7 +70,100 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
 
   try {
     const res = await fetch(targetUrl, reqInit);
-    const body = await res.arrayBuffer();
+    let body = await res.arrayBuffer();
+
+    // ─── 动态注入 sw.js 异常捕获，防止 Uncaught (in promise) Failed to fetch ───
+    if (url.pathname === '/reader3/sw.js' && res.status === 200) {
+      try {
+        const textDecoder = new TextDecoder('utf-8');
+        let swText = textDecoder.decode(body);
+
+        // 1. 拦截并优化同源 /reader3/ API 调用的 fetch 异常
+        const apiTarget = 'if (request.url.indexOf("/reader3/") !== -1) {\n    return fetch(request);\n  }';
+        const apiReplacement = `if (request.url.indexOf("/reader3/") !== -1) {
+    return fetch(request).catch(err => {
+      console.warn("ServiceWorker fetch API failed:", request.url, err);
+      return new Response(JSON.stringify({ isSuccess: false, errorMsg: "网络请求失败，请检查网络连接" }), {
+        status: 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    });
+  }`;
+
+        if (swText.includes(apiTarget)) {
+          swText = swText.replace(apiTarget, apiReplacement);
+        } else {
+          swText = swText.replace(
+            /if\s*\(\s*request\.url\.indexOf\(\s*["']\/reader3\/["']\s*\)\s*!==\s*-1\s*\)\s*\{\s*return\s+fetch\(\s*request\s*\);\s*\}/g,
+            apiReplacement
+          );
+        }
+
+        // 2. 拦截并优化 doRequest (如跨域外网图片等) 的 fetch 异常
+        const fetchTarget = `    // 对于不在 caches 中的资源进行请求
+    return fetch(request).then(fetchRes => {
+      if (fetchRes.type === "opaque") {
+        let resClone = fetchRes.clone();
+        opaqueCache.put(originRequest, fetchRes);
+        return resClone;
+      }
+      // 这里只缓存成功 && 请求是 GET 方式的结果，对于 POST 等请求，可把 indexDB 给用上
+      if (!fetchRes || fetchRes.status !== 200 || request.method !== "GET") {
+        return fetchRes;
+      }
+
+      // 只能缓存同源的图片、字体，跨域的资源都访问不了
+      let resClone = fetchRes.clone();
+      if (isImage(fetchRes) || isFont(fetchRes)) {
+        siteCache.put(originRequest, fetchRes);
+      }
+
+      return resClone;
+    });`;
+
+        const fetchReplacement = `    // 对于不在 caches 中的资源进行请求
+    return fetch(request).then(fetchRes => {
+      if (fetchRes.type === "opaque") {
+        let resClone = fetchRes.clone();
+        opaqueCache.put(originRequest, fetchRes);
+        return resClone;
+      }
+      // 这里只缓存成功 && 请求是 GET 方式的结果，对于 POST 等请求，可把 indexDB 给用上
+      if (!fetchRes || fetchRes.status !== 200 || request.method !== "GET") {
+        return fetchRes;
+      }
+
+      // 只能缓存同源的图片、字体，跨域的资源都访问不了
+      let resClone = fetchRes.clone();
+      if (isImage(fetchRes) || isFont(fetchRes)) {
+        siteCache.put(originRequest, fetchRes);
+      }
+
+      return resClone;
+    }).catch(err => {
+      console.warn("ServiceWorker fetch failed for:", request.url, err);
+      return new Response("", { status: 404, statusText: "Fetch failed" });
+    });`;
+
+        if (swText.includes(fetchTarget)) {
+          swText = swText.replace(fetchTarget, fetchReplacement);
+        } else {
+          // 正则备用方案
+          swText = swText.replace(
+            /return\s+fetch\(\s*request\s*\)\.then\([\s\S]+?\}\s*\);\s*\n\s*\}\s*;/g,
+            (match) => {
+              return match.replace(/\)\s*;\s*\}\s*;\s*$/, ")\n    .catch(err => {\n      console.warn(\"ServiceWorker fetch failed for:\", request.url, err);\n      return new Response(\"\", { status: 404, statusText: \"Fetch failed\" });\n    });\n  };");
+            }
+          );
+        }
+
+        const textEncoder = new TextEncoder();
+        body = textEncoder.encode(swText).buffer;
+        console.log("[Proxy] 已成功对 /reader3/sw.js 进行动态 Promise.catch 异常捕获注入！");
+      } catch (rewriteError) {
+        console.error("[Proxy] 动态改写 sw.js 失败:", rewriteError);
+      }
+    }
 
     const responseHeaders = new Headers();
     // 复制目标服务器的所有响应头
