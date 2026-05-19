@@ -26,7 +26,9 @@ export default function SourceListView({
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [cleaning, setCleaning] = useState(false);
-  const [excludeDuplicate, setExcludeDuplicate] = useState(false);
+  const [excludeDuplicate, setExcludeDuplicate] = useState(() => {
+    return localStorage.getItem('legado_exclude_duplicate') === 'true';
+  });
 
   const fetchSources = async (q = '', p = 1, f = 'all', exDup = false) => {
     setLoading(true);
@@ -172,7 +174,11 @@ export default function SourceListView({
               <input 
                 type="checkbox"
                 checked={excludeDuplicate}
-                onChange={(e) => setExcludeDuplicate(e.target.checked)}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setExcludeDuplicate(val);
+                  localStorage.setItem('legado_exclude_duplicate', String(val));
+                }}
                 className="rounded border-outline text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer"
               />
               排除重复
