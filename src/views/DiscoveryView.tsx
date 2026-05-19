@@ -145,9 +145,9 @@ export default function DiscoveryView() {
             className="bg-surface-container-low border border-outline-variant text-xs rounded-lg px-3 py-1.5 outline-none focus:border-primary font-medium"
           >
             <option value="all">全部 ({totalCount})</option>
-            <option value="none">未标记 ({unmarkedCount})</option>
-            <option value="valid">标记有效 ({validCount})</option>
-            <option value="invalid">标记失效 ({invalidCount})</option>
+            <option value="none">⏳ 待确认 ({unmarkedCount})</option>
+            <option value="valid">✅ 标记有效 ({validCount})</option>
+            <option value="invalid">❌ 标记失效 ({invalidCount})</option>
           </select>
         </div>
       </div>
@@ -166,8 +166,12 @@ export default function DiscoveryView() {
             return (
               <div
                 key={item.index}
-                className={`bg-surface-container-lowest border border-outline-variant rounded-2xl p-5 shadow-sm flex flex-col justify-between relative overflow-hidden transition-all duration-300 hover:shadow-md ${
-                  item.status === 'invalid' ? 'opacity-70 bg-surface-container-low/40' : ''
+                className={`bg-surface-container-lowest rounded-2xl p-5 shadow-sm flex flex-col justify-between relative overflow-hidden transition-all duration-300 hover:shadow-md ${
+                  item.status === 'invalid'
+                    ? 'opacity-70 bg-surface-container-low/40 border border-outline-variant'
+                    : item.status === 'none'
+                    ? 'border-2 border-warning/50 bg-warning/5'
+                    : 'border border-outline-variant'
                 }`}
               >
                 {/* 状态角标 */}
@@ -183,8 +187,8 @@ export default function DiscoveryView() {
                     </span>
                   )}
                   {item.status === 'none' && (
-                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-surface-container-high text-secondary border border-outline-variant/60">
-                      未标记
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-warning/15 text-warning border border-warning/30">
+                      待确认
                     </span>
                   )}
                 </div>
@@ -226,17 +230,29 @@ export default function DiscoveryView() {
 
                 {/* 操作按键栏 */}
                 <div className="grid grid-cols-3 gap-1.5 mt-5 pt-3 border-t border-outline-variant/30 shrink-0">
-                  <a
-                    href={item.sourceUrl || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant bg-surface-container-low hover:bg-surface-container transition-colors ${
-                      !(item.sourceUrl.startsWith('http://') || item.sourceUrl.startsWith('https://')) ? 'opacity-40 pointer-events-none' : ''
-                    }`}
-                  >
-                    <ExternalLink size={10} />
-                    电脑打开
-                  </a>
+                  {(() => {
+                    const url = item.sourceUrl || '';
+                    const isHttpUrl = url.startsWith('http://') || url.startsWith('https://');
+                    return isHttpUrl ? (
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant bg-surface-container-low hover:bg-surface-container transition-colors"
+                      >
+                        <ExternalLink size={10} />
+                        电脑打开
+                      </a>
+                    ) : (
+                      <span
+                        className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant/40 bg-surface-container-low/40 text-secondary/40 cursor-not-allowed select-none"
+                        title={url ? `不支持的链接格式: ${url}` : '无原始链接'}
+                      >
+                        <ExternalLink size={10} />
+                        电脑打开
+                      </span>
+                    );
+                  })()}
 
                   <button
                     onClick={() => handleToggle(item.index, item.status === 'valid' ? 'none' : 'valid')}
