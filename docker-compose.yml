@@ -11,11 +11,11 @@ services:
             - PORT=3000
             - API_SECRET=wal116266321
             - THREAD_COUNT=4
-            - NO_PROXY=172.17.0.1,127.0.0.1,localhost,192.168.3.0/24         ##保持默认
+            - NO_PROXY=172.17.0.1,127.0.0.1,localhost,192.168.3.0/24,legado-reader         ##保持默认
             - ALL_PROXY=http://192.168.3.12:7890              ## 更换为自己的http代理
             - HTTPS_PROXY=http://192.168.3.12:7890              ## 更换为自己的http代理
             - HTTP_PROXY=http://192.168.3.12:7890             ## 更换为自己的http代理
-            - READER_URL=http://legado-reader:4396             ## 容器内网代理地址
+            - READER_URL=http://legado-reader:8080             ## 容器内网代理地址
         volumes:
             - ./app:/app
             - /app/node_modules
