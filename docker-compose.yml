@@ -15,7 +15,7 @@ services:
             - ALL_PROXY=http://192.168.3.12:7890              ## 更换为自己的http代理
             - HTTPS_PROXY=http://192.168.3.12:7890              ## 更换为自己的http代理
             - HTTP_PROXY=http://192.168.3.12:7890             ## 更换为自己的http代理
-            - READER_URL=http://legado-reader:8080             ## 容器内网代理地址
+            - READER_URL=http://legado-reader:4396             ## 容器内网代理地址
         volumes:
             - ./app:/app
             - /app/node_modules
@@ -29,7 +29,7 @@ services:
         container_name: legado-reader
         image: hectorqin/reader:latest
         ports:
-            - 8080:8080
+            - 4396:8080
         environment:
             - SPRING_PROFILES_ACTIVE=prod
             - READER_APP_SECURE=true
