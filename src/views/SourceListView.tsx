@@ -212,7 +212,7 @@ export default function SourceListView({
             title="对所有书源可用性进行并发测试，并在完成后自动标记禁用重复和失效项"
           >
             {cleaning ? (
-              <Sparkles size={14} className="animate-spin text-primary animate-pulse" />
+              <Sparkles size={14} className="animate-spin text-primary" />
             ) : (
               <ShieldCheck size={14} className={isTestingAll ? 'animate-pulse text-primary' : ''} />
             )}
@@ -393,7 +393,7 @@ export default function SourceListView({
               <ChevronLeft size={16} />
             </button>
             
-            <div className="flex items-center px-3 h-8 rounded-lg border border-outline-variant bg-surface-container-low text-xs font-bold min-w-[3rem] justify-center">
+            <div className="flex items-center px-3 h-8 rounded-lg border border-outline-variant bg-surface-container-low text-xs font-bold min-w-12 justify-center">
               {page}
             </div>
             
