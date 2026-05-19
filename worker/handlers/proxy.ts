@@ -1,9 +1,32 @@
+function rewritePath(pathname: string): string {
+  // 静态资源保持原样（它们本来就包含 /reader3 且在 contextPath 下也是位于 /reader3 根目录）
+  const isStaticAsset = 
+    pathname === '/reader3' || 
+    pathname === '/reader3/' ||
+    pathname === '/reader3/index.html' ||
+    pathname.startsWith('/reader3/static/') ||
+    pathname.startsWith('/reader3/js/') ||
+    pathname.startsWith('/reader3/css/') ||
+    pathname.startsWith('/reader3/img/') ||
+    pathname.startsWith('/reader3/fonts/') ||
+    pathname.startsWith('/reader3/favicon.ico');
+
+  if (isStaticAsset) {
+    return pathname;
+  }
+
+  // 针对 WebDAV 或是其它 API，如果已经是 /reader3 开头的非静态资源，重写为 /reader3/reader3/...
+  // 如果是 /epub 或 /getBookshelf 等其它被代理的根级路由，重写为 /reader3/epub/... 或 /reader3/getBookshelf
+  return '/reader3' + pathname;
+}
+
 export async function proxyToReader(request: Request, readerUrl: string): Promise<Response> {
   const url = new URL(request.url);
   
   // 确保拼接后的 URL 正确，处理 readerUrl 尾部斜杠问题
   const cleanReaderUrl = readerUrl.endsWith('/') ? readerUrl.slice(0, -1) : readerUrl;
-  const targetUrl = `${cleanReaderUrl}${url.pathname}${url.search}`;
+  const rewrittenPath = rewritePath(url.pathname);
+  const targetUrl = `${cleanReaderUrl}${rewrittenPath}${url.search}`;
   
   console.log(`[Proxy] 代理请求: ${request.method} ${url.pathname} -> ${targetUrl}`);
 
@@ -21,7 +44,8 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
   if (destination) {
     try {
       const destUrl = new URL(destination);
-      const targetDestUrl = `${cleanReaderUrl}${destUrl.pathname}${destUrl.search}`;
+      const rewrittenDestPath = rewritePath(destUrl.pathname);
+      const targetDestUrl = `${cleanReaderUrl}${rewrittenDestPath}${destUrl.search}`;
       headers.set('destination', targetDestUrl);
       console.log(`[Proxy] 重写 WebDAV Destination 头: ${destination} -> ${targetDestUrl}`);
     } catch (e) {
