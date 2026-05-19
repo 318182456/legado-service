@@ -59,7 +59,8 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
     responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK');
     responseHeaders.set('Access-Control-Allow-Headers', '*');
 
-    return new Response(body, {
+    const hasNullBody = [101, 204, 205, 304].includes(res.status);
+    return new Response(hasNullBody ? null : body, {
       status: res.status,
       headers: responseHeaders,
     });
