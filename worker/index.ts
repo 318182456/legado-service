@@ -29,6 +29,7 @@ export default {
     if (
       path.startsWith("/reader3/") ||
       path.startsWith("/epub/") ||
+      path === "/assets/reader.css" ||
       path === "/getBookshelf" ||
       path === "/getChapterList" ||
       path === "/getBookContent" ||
