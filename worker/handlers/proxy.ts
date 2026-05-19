@@ -30,8 +30,6 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
   const cleanReaderUrl = readerUrl.endsWith('/') ? readerUrl.slice(0, -1) : readerUrl;
   const rewrittenPath = rewritePath(url.pathname);
   const targetUrl = `${cleanReaderUrl}${rewrittenPath}${url.search}`;
-  
-  console.log(`[Proxy] 代理请求: ${request.method} ${url.pathname} -> ${targetUrl}`);
 
   const headers = new Headers();
   // 复制所有传入请求头，特别是 Authorization, Depth, Destination, Overwrite, Timeout 等
