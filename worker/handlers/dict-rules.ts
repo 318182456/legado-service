@@ -9,7 +9,7 @@ import {
 export async function handleListDictRules(env: Env, url: URL): Promise<Response> {
   const q = url.searchParams.get("q") || "";
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 20;
+  const limit = 10;
   const offset = (page - 1) * limit;
 
   const [countRow, listResult] = await Promise.all([
