@@ -16,10 +16,35 @@ export async function handleSubscribeOutput(env: Env, type: "sources" | "rules")
       });
     }
 
-    const table = type === "sources" ? "sources" : "rules";
-    const groupBy = type === "sources" ? "book_source_url" : "name, pattern";
-    const { results } = await env.DB.prepare(`SELECT raw_json FROM ${table} WHERE id IN (SELECT MIN(id) FROM ${table} WHERE enabled=1 GROUP BY ${groupBy}) ORDER BY id`).all();
-    const jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
+    let jsonArray = "[]";
+    if (type === "sources") {
+      const { results } = await env.DB.prepare(`
+        SELECT raw_json, group_name FROM sources 
+        WHERE id IN (
+          SELECT MIN(id) FROM sources WHERE enabled=1 GROUP BY book_source_url
+        ) 
+        ORDER BY id
+      `).all();
+      const sources = results.map((r: any) => {
+        try {
+          const item = JSON.parse(r.raw_json);
+          item.bookSourceGroup = r.group_name || "";
+          return JSON.stringify(item);
+        } catch (_) {
+          return r.raw_json;
+        }
+      });
+      jsonArray = "[" + sources.join(",") + "]";
+    } else {
+      const { results } = await env.DB.prepare(`
+        SELECT raw_json FROM rules 
+        WHERE id IN (
+          SELECT MIN(id) FROM rules WHERE enabled=1 GROUP BY name, pattern
+        ) 
+        ORDER BY id
+      `).all();
+      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
+    }
     
     return new Response(jsonArray, {
       headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "MISS" },

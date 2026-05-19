@@ -258,11 +258,19 @@ export async function rebuildCache(env: Env, type: "source" | "rule") {
   if (type === "source") {
     // 跨订阅全局去重：使用 url_hash 避免长文本索引限制
     const rows = await env.DB.prepare(
-      `SELECT raw_json FROM sources WHERE id IN (SELECT MIN(id) FROM sources WHERE enabled=1 GROUP BY url_hash) ORDER BY id`
+      `SELECT raw_json, group_name FROM sources WHERE id IN (SELECT MIN(id) FROM sources WHERE enabled=1 GROUP BY url_hash) ORDER BY id`
     ).all();
     
-    // 直接拼接 raw_json 字符串，完全省去 JSON.parse 和 JSON.stringify 的 CPU 开销
-    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
+    const sources = rows.results.map((r: any) => {
+      try {
+        const item = JSON.parse(r.raw_json);
+        item.bookSourceGroup = r.group_name || "";
+        return JSON.stringify(item);
+      } catch (_) {
+        return r.raw_json;
+      }
+    });
+    const mergedStr = "[" + sources.join(",") + "]";
     
     await env.KV.put("sources", mergedStr, {
       expirationTtl: CACHE_TTL,

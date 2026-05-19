@@ -457,7 +457,7 @@ export async function handleStats(env: Env): Promise<Response> {
 export async function handleCleanupSources(env: Env): Promise<Response> {
   console.log("[CleanupSources] 开始标记失效与重复书源...");
   try {
-    // 1. 标记失效书源：将 is_available = 0 的书源禁用，并归类到“失效”分组
+    // 1. 标记失效书源：将 is_available = 0 或需要登录（含有非空 loginUrl）的书源禁用，并归类到“失效”分组
     const markInvalidStmt = env.DB.prepare(`
       UPDATE sources
       SET enabled = 0,
@@ -466,7 +466,8 @@ export async function handleCleanupSources(env: Env): Promise<Response> {
             WHEN group_name LIKE '%失效%' THEN group_name
             ELSE group_name || ',失效'
           END
-      WHERE is_available = 0
+      WHERE is_available = 0 
+         OR (json_extract(raw_json, '$.loginUrl') IS NOT NULL AND json_extract(raw_json, '$.loginUrl') != '')
     `);
 
     // 2. 标记重复书源：使用窗口函数对相同 url_hash 的书源进行排序
