@@ -309,121 +309,138 @@ export function b64urlToU8(s: string): Uint8Array {
 // ─── 数据库初始化 (参照 NodeWarden) ───────────────────────────────
 
 export let schemaVerified = false;
+let initPromise: Promise<void> | null = null;
 
 /**
  * 确保数据库表结构已初始化与升级
  */
 export async function ensureDatabase(env: Env): Promise<void> {
   if (schemaVerified) return;
+  if (initPromise) return initPromise;
 
-  let needInit = false;
-  let fileVersion = "";
-  let dbVersion = "";
+  initPromise = (async () => {
+    let needInit = false;
+    let fileVersion = "";
+    let dbVersion = "";
 
-  // 1. 读取本地版本文件
-  try {
-    const versionPath = path.join(process.cwd(), "VERSION");
-    if (await fs.pathExists(versionPath)) {
-      fileVersion = (await fs.readFile(versionPath, "utf-8")).trim();
-    }
-  } catch (err) {
-    console.error("读取 VERSION 文件失败:", err);
-  }
-
-  // 2. 尝试获取数据库当前版本
-  try {
-    const dbVerRow = await env.DB.prepare("SELECT value FROM system_config WHERE key = 'version'").first() as any;
-    dbVersion = dbVerRow?.value || "";
-  } catch (_) {
-    // 如果表不存在或查询报错，说明需要初始化
-    needInit = true;
-  }
-
-  // 3. 比较版本，如果版本不一致，强制执行初始化与结构升级
-  if (fileVersion && dbVersion && fileVersion !== dbVersion) {
-    console.log(`检测到版本更新: ${dbVersion} -> ${fileVersion}，强制执行数据库结构升级...`);
-    needInit = true;
-  }
-
-  // 4. 如果不需要强制升级，且 KV 中标记已验证，进行快速验证
-  if (!needInit) {
-    const isVerified = await env.KV.get("db_verified");
-    if (isVerified === "true") {
-      try {
-        // 快速检查核心表
-        await env.DB.prepare("SELECT 1 FROM subscriptions LIMIT 1").run();
-        schemaVerified = true;
-        return;
-      } catch (e) {
-        console.warn("数据库标志位存在但核心表缺失，正在强制重新初始化...");
-        needInit = true;
+    // 1. 读取本地版本文件
+    try {
+      const versionPath = path.join(process.cwd(), "VERSION");
+      if (await fs.pathExists(versionPath)) {
+        fileVersion = (await fs.readFile(versionPath, "utf-8")).trim();
       }
-    } else {
+    } catch (err) {
+      console.error("读取 VERSION 文件失败:", err);
+    }
+
+    // 2. 尝试获取数据库当前版本
+    try {
+      const dbVerRow = await env.DB.prepare("SELECT value FROM system_config WHERE key = 'version'").first() as any;
+      dbVersion = dbVerRow?.value || "";
+    } catch (_) {
+      // 如果表不存在或查询报错，说明需要初始化
       needInit = true;
     }
-  }
 
-  console.log("正在执行数据库初始化与结构同步...");
-  let successCount = 0;
-  let failCount = 0;
+    // 3. 比较版本，如果版本不一致，强制执行初始化与结构升级
+    if (fileVersion && dbVersion && fileVersion !== dbVersion) {
+      console.log(`检测到版本更新: ${dbVersion} -> ${fileVersion}，强制执行数据库结构升级...`);
+      needInit = true;
+    }
+
+    // 4. 如果不需要强制升级，且 KV 中标记已验证，进行快速验证
+    if (!needInit) {
+      const isVerified = await env.KV.get("db_verified");
+      if (isVerified === "true") {
+        try {
+          // 快速检查核心表
+          await env.DB.prepare("SELECT 1 FROM subscriptions LIMIT 1").run();
+          schemaVerified = true;
+          return;
+        } catch (e) {
+          console.warn("数据库标志位存在但核心表缺失，正在强制重新初始化...");
+          needInit = true;
+        }
+      } else {
+        needInit = true;
+      }
+    }
+
+    console.log("正在执行数据库初始化与结构同步...");
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      // 开启外键支持 (Postgres 不需要这个，但 D1 需要)
+      try {
+        await env.DB.prepare("PRAGMA foreign_keys = ON").run();
+      } catch (_) {}
+
+      // 逐条执行初始化语句，避免单个语句失败导致全局回滚
+      for (const sql of SCHEMA_STATEMENTS) {
+        try {
+          await env.DB.prepare(sql).run();
+          successCount++;
+        } catch (e: any) {
+          const msg = e.message?.toLowerCase() || "";
+          const errCode = String(e.code || "");
+          // 忽略已经存在的错误 (包含 PostgreSQL 23505 唯一性约束冲突、索引已存在、字段已存在等)
+          if (
+            msg.includes("already exists") || 
+            msg.includes("duplicate key") ||
+            msg.includes("duplicate_key") ||
+            errCode === "23505" ||
+            msg.includes("duplicate column") ||
+            msg.includes("already a column") ||
+            msg.includes("does not exist") ||
+            msg.includes("syntax error") // 忽略 SQLite 不支持的 Postgres 语法 (如 DROP CONSTRAINT)
+          ) {
+            successCount++;
+          } else {
+            console.error(`SQL 执行失败: ${sql.substring(0, 50)}...`, e);
+            failCount++;
+          }
+        }
+      }
+
+      // 只要有成功的语句，且没有严重的致命错误，就标记为成功
+      if (successCount > 0 && failCount === 0) {
+        await env.KV.put("db_verified", "true");
+        schemaVerified = true;
+        console.log(`数据库初始化与升级完成: 成功 ${successCount} 条`);
+
+        // ─── 更新版本号到数据库 ──────────────────
+        if (fileVersion) {
+          try {
+            await env.DB.prepare("INSERT INTO system_config (key, value) VALUES ('version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+              .bind(fileVersion)
+              .run();
+            await env.KV.put("last_version_update", JSON.stringify({
+              old: dbVersion,
+              new: fileVersion,
+              time: new Date().toISOString()
+            }));
+            console.log(`版本号同步成功: ${fileVersion}`);
+          } catch (verErr) {
+            console.error("版本号更新失败:", verErr);
+          }
+        }
+        // ──────────────────────────────────
+      } else {
+        console.error(`数据库初始化不完整: 成功 ${successCount}, 失败 ${failCount}`);
+        throw new Error(`数据库初始化不完整: 成功 ${successCount}, 失败 ${failCount}`);
+      }
+    } catch (e: any) {
+      console.error("数据库初始化过程发生致命错误:", e);
+      throw e;
+    }
+  })();
 
   try {
-    // 开启外键支持 (Postgres 不需要这个，但 D1 需要)
-    try {
-      await env.DB.prepare("PRAGMA foreign_keys = ON").run();
-    } catch (_) {}
-
-    // 逐条执行初始化语句，避免单个语句失败导致全局回滚
-    for (const sql of SCHEMA_STATEMENTS) {
-      try {
-        await env.DB.prepare(sql).run();
-        successCount++;
-      } catch (e: any) {
-        const msg = e.message?.toLowerCase() || "";
-        // 忽略已经存在的错误
-        if (
-          msg.includes("already exists") || 
-          msg.includes("duplicate column") ||
-          msg.includes("already a column") ||
-          msg.includes("does not exist") ||
-          msg.includes("syntax error") // 忽略 SQLite 不支持的 Postgres 语法 (如 DROP CONSTRAINT)
-        ) {
-          successCount++;
-        } else {
-          console.error(`SQL 执行失败: ${sql.substring(0, 50)}...`, e);
-          failCount++;
-        }
-      }
-    }
-
-    // 只要有成功的语句，且没有严重的致命错误，就标记为成功
-    if (successCount > 0 && failCount === 0) {
-      await env.KV.put("db_verified", "true");
-      schemaVerified = true;
-      console.log(`数据库初始化与升级完成: 成功 ${successCount} 条`);
-
-      // ─── 更新版本号到数据库 ──────────────────
-      if (fileVersion) {
-        try {
-          await env.DB.prepare("INSERT INTO system_config (key, value) VALUES ('version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-            .bind(fileVersion)
-            .run();
-          await env.KV.put("last_version_update", JSON.stringify({
-            old: dbVersion,
-            new: fileVersion,
-            time: new Date().toISOString()
-          }));
-          console.log(`版本号同步成功: ${fileVersion}`);
-        } catch (verErr) {
-          console.error("版本号更新失败:", verErr);
-        }
-      }
-      // ──────────────────────────────────
-    } else {
-      console.error(`数据库初始化不完整: 成功 ${successCount}, 失败 ${failCount}`);
-    }
-  } catch (e: any) {
-    console.error("数据库初始化过程发生致命错误:", e);
-    throw e;
+    await initPromise;
+  } catch (err) {
+    initPromise = null; // 失败后清空，允许下次重试
+    throw err;
   }
 }
+
