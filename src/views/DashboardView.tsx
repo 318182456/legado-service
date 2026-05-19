@@ -56,7 +56,7 @@ export default function DashboardView({ onImport }: DashboardViewProps) {
   useEffect(() => {
     const generateQR = async () => {
       try {
-        const url = `legado://import/rssSource?src=${encodeURIComponent(window.location.origin + '/subscribe/info.json')}`;
+        const url = `${window.location.origin}/subscribe/info.json`;
           
         const dataUrl = await QRCode.toDataURL(url, {
           width: 140,
@@ -92,13 +92,24 @@ export default function DashboardView({ onImport }: DashboardViewProps) {
           <h2 className="text-2xl font-bold tracking-tight">控制台摘要</h2>
           <p className="text-sm text-secondary mt-1">系统当前运行状态概览</p>
         </div>
-        <button 
-          onClick={fetchData}
-          className="flex items-center gap-2 px-4 py-2 bg-surface-container-lowest border border-outline-variant text-primary rounded-lg text-sm font-medium hover:bg-surface-container-low transition-colors"
-        >
-          <RefreshCw size={16} />
-          刷新数据
-        </button>
+        <div className="flex gap-3">
+          <a 
+            href="/reader3/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
+          >
+            <Book size={16} />
+            进入在线阅读器
+          </a>
+          <button 
+            onClick={fetchData}
+            className="flex items-center gap-2 px-4 py-2 bg-surface-container-lowest border border-outline-variant text-primary rounded-lg text-sm font-medium hover:bg-surface-container-low transition-colors"
+          >
+            <RefreshCw size={16} />
+            刷新数据
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

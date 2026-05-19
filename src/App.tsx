@@ -8,7 +8,8 @@ import {
   LogOut, 
   Sparkles, 
   ShieldCheck, 
-  Package 
+  Package,
+  BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as api from './api';
@@ -273,6 +274,7 @@ export default function App() {
           <NavItem active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} icon={<Sparkles size={20} />} label={isSidebarOpen ? "净化规则" : ""} />
           <div className="my-4 border-t border-outline-variant/30" />
           <NavItem active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<Package size={20} />} label={isSidebarOpen ? "资源管理 (R2)" : ""} />
+          <NavItem active={false} onClick={() => window.open('/reader3/', '_blank')} icon={<BookOpen size={20} />} label={isSidebarOpen ? "在线阅读" : ""} />
           <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label={isSidebarOpen ? "系统设置" : ""} />
         </nav>
 
