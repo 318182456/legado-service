@@ -6,7 +6,7 @@ export default function DiscoveryView() {
   const [sources, setSources] = useState<api.RssSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [filter, setFilter] = useState<'all' | 'none' | 'valid' | 'invalid'>('all');
   const [togglingIndex, setTogglingIndex] = useState<number | null>(null);
 
   const fetchSources = async () => {
@@ -25,12 +25,12 @@ export default function DiscoveryView() {
     fetchSources();
   }, []);
 
-  const handleToggle = async (index: number, currentEnabled: boolean) => {
+  const handleToggle = async (index: number, status: 'none' | 'valid' | 'invalid') => {
     setTogglingIndex(index);
     try {
-      await api.toggleRssSource(index, !currentEnabled);
+      await api.toggleRssSource(index, status);
       setSources(prev =>
-        prev.map(item => (item.index === index ? { ...item, enabled: !currentEnabled } : item))
+        prev.map(item => (item.index === index ? { ...item, status } : item))
       );
     } catch (e) {
       alert('标记状态更新失败: ' + String(e));
@@ -45,19 +45,17 @@ export default function DiscoveryView() {
       item.sourceName.toLowerCase().includes(query.toLowerCase()) ||
       item.sourceGroup.toLowerCase().includes(query.toLowerCase());
     
-    if (filter === 'enabled') {
-      return matchesSearch && item.enabled;
-    }
-    if (filter === 'disabled') {
-      return matchesSearch && !item.enabled;
-    }
+    if (filter === 'valid') return matchesSearch && item.status === 'valid';
+    if (filter === 'invalid') return matchesSearch && item.status === 'invalid';
+    if (filter === 'none') return matchesSearch && item.status === 'none';
     return matchesSearch;
   });
 
   // 统计数据
   const totalCount = sources.length;
-  const enabledCount = sources.filter(s => s.enabled).length;
-  const disabledCount = totalCount - enabledCount;
+  const validCount = sources.filter(s => s.status === 'valid').length;
+  const invalidCount = sources.filter(s => s.status === 'invalid').length;
+  const unmarkedCount = totalCount - validCount - invalidCount;
 
   if (loading && sources.length === 0) {
     return (
@@ -92,7 +90,7 @@ export default function DiscoveryView() {
           </div>
           <div>
             <div className="text-xs text-secondary font-medium uppercase tracking-wider">订阅源总数</div>
-            <div className="text-2xl font-black mt-1 font-mono">{totalCount}</div>
+            <div className="text-2xl font-black mt-1 font-mono">{totalCount} <span className="text-xs text-secondary font-normal font-sans">({unmarkedCount} 未标)</span></div>
           </div>
           <div className="absolute right-0 bottom-0 opacity-[0.03] text-primary group-hover:scale-110 transition-transform -mr-2 -mb-2">
             <Globe size={96} />
@@ -104,8 +102,8 @@ export default function DiscoveryView() {
             <CheckCircle size={24} />
           </div>
           <div>
-            <div className="text-xs text-secondary font-medium uppercase tracking-wider">正常订阅源</div>
-            <div className="text-2xl font-black mt-1 text-success font-mono">{enabledCount}</div>
+            <div className="text-xs text-secondary font-medium uppercase tracking-wider">标记有效数</div>
+            <div className="text-2xl font-black mt-1 text-success font-mono">{validCount}</div>
           </div>
           <div className="absolute right-0 bottom-0 opacity-[0.03] text-success group-hover:scale-110 transition-transform -mr-2 -mb-2">
             <CheckCircle size={96} />
@@ -117,8 +115,8 @@ export default function DiscoveryView() {
             <AlertTriangle size={24} />
           </div>
           <div>
-            <div className="text-xs text-secondary font-medium uppercase tracking-wider">失效已标记</div>
-            <div className="text-2xl font-black mt-1 text-error font-mono">{disabledCount}</div>
+            <div className="text-xs text-secondary font-medium uppercase tracking-wider">标记失效数</div>
+            <div className="text-2xl font-black mt-1 text-error font-mono">{invalidCount}</div>
           </div>
           <div className="absolute right-0 bottom-0 opacity-[0.03] text-error group-hover:scale-110 transition-transform -mr-2 -mb-2">
             <AlertTriangle size={96} />
@@ -147,8 +145,9 @@ export default function DiscoveryView() {
             className="bg-surface-container-low border border-outline-variant text-xs rounded-lg px-3 py-1.5 outline-none focus:border-primary font-medium"
           >
             <option value="all">全部 ({totalCount})</option>
-            <option value="enabled">仅看正常 ({enabledCount})</option>
-            <option value="disabled">仅看失效 ({disabledCount})</option>
+            <option value="none">未标记 ({unmarkedCount})</option>
+            <option value="valid">标记有效 ({validCount})</option>
+            <option value="invalid">标记失效 ({invalidCount})</option>
           </select>
         </div>
       </div>
@@ -162,27 +161,32 @@ export default function DiscoveryView() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredSources.map((item) => {
-            const isEnabled = item.enabled;
             const isToggling = togglingIndex === item.index;
 
             return (
               <div
                 key={item.index}
                 className={`bg-surface-container-lowest border border-outline-variant rounded-2xl p-5 shadow-sm flex flex-col justify-between relative overflow-hidden transition-all duration-300 hover:shadow-md ${
-                  !isEnabled ? 'opacity-70 bg-surface-container-low/40' : ''
+                  item.status === 'invalid' ? 'opacity-70 bg-surface-container-low/40' : ''
                 }`}
               >
                 {/* 状态角标 */}
                 <div className="absolute top-4 right-4">
-                  <span
-                    className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                      isEnabled
-                        ? 'bg-success-container/20 text-success border border-success/20'
-                        : 'bg-error-container/20 text-error border border-error/20'
-                    }`}
-                  >
-                    {isEnabled ? '可用' : '失效'}
-                  </span>
+                  {item.status === 'valid' && (
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-success-container/20 text-success border border-success/20">
+                      有效
+                    </span>
+                  )}
+                  {item.status === 'invalid' && (
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-error-container/20 text-error border border-error/20">
+                      失效
+                    </span>
+                  )}
+                  {item.status === 'none' && (
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-surface-container-high text-secondary border border-outline-variant/60">
+                      未标记
+                    </span>
+                  )}
                 </div>
 
                 {/* 订阅源核心信息 */}
@@ -199,7 +203,7 @@ export default function DiscoveryView() {
                       />
                     </div>
                     <div className="min-w-0">
-                      <h4 className="font-extrabold text-sm text-on-surface truncate pr-6" title={item.sourceName}>
+                      <h4 className="font-extrabold text-sm text-on-surface truncate pr-10" title={item.sourceName}>
                         {item.sourceName}
                       </h4>
                       <p className="text-[10px] text-secondary font-bold uppercase mt-1 bg-surface-container-low px-1.5 py-0.5 rounded w-fit">
@@ -221,34 +225,43 @@ export default function DiscoveryView() {
                 </div>
 
                 {/* 操作按键栏 */}
-                <div className="grid grid-cols-2 gap-2 mt-5 pt-3 border-t border-outline-variant/30 shrink-0">
+                <div className="grid grid-cols-3 gap-1.5 mt-5 pt-3 border-t border-outline-variant/30 shrink-0">
                   <a
                     href={item.sourceUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-bold border border-outline-variant bg-surface-container-low hover:bg-surface-container transition-colors ${
-                      !item.sourceUrl ? 'opacity-40 pointer-events-none' : ''
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold border border-outline-variant bg-surface-container-low hover:bg-surface-container transition-colors ${
+                      !(item.sourceUrl.startsWith('http://') || item.sourceUrl.startsWith('https://')) ? 'opacity-40 pointer-events-none' : ''
                     }`}
                   >
-                    <ExternalLink size={12} />
+                    <ExternalLink size={10} />
                     电脑打开
                   </a>
 
                   <button
-                    onClick={() => handleToggle(item.index, isEnabled)}
+                    onClick={() => handleToggle(item.index, item.status === 'valid' ? 'none' : 'valid')}
                     disabled={isToggling}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-bold transition-all shadow-sm ${
-                      isEnabled
-                        ? 'bg-error-container/20 text-error hover:bg-error-container/45 border border-error/20'
-                        : 'bg-primary text-on-primary hover:opacity-90'
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
+                      item.status === 'valid'
+                        ? 'bg-success-container/30 text-success border-success/30 hover:bg-success-container/45'
+                        : 'border-outline-variant bg-surface-container-low hover:bg-surface-container'
                     } disabled:opacity-50`}
                   >
-                    {isToggling ? (
-                      <RefreshCw size={12} className="animate-spin" />
-                    ) : (
-                      <Power size={12} />
-                    )}
-                    {isEnabled ? '标记失效' : '恢复正常'}
+                    <CheckCircle size={10} />
+                    {item.status === 'valid' ? '已标有效' : '标记有效'}
+                  </button>
+
+                  <button
+                    onClick={() => handleToggle(item.index, item.status === 'invalid' ? 'none' : 'invalid')}
+                    disabled={isToggling}
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${
+                      item.status === 'invalid'
+                        ? 'bg-error-container/30 text-error border-error/30 hover:bg-error-container/45'
+                        : 'border-outline-variant bg-surface-container-low hover:bg-surface-container'
+                    } disabled:opacity-50`}
+                  >
+                    <Power size={10} />
+                    {item.status === 'invalid' ? '已标失效' : '标记失效'}
                   </button>
                 </div>
               </div>

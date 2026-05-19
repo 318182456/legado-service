@@ -736,22 +736,26 @@
                            '<div class="grid">';
                 
                 items.forEach(item => {
+                    const status = item.status || 'none';
+                    if (status === 'invalid') return;
+                    
                     const exportUrl = API_ORIGIN + '/api/rss-sources/' + item.index + '/export';
                     const importUrl = 'legado://import/rssSource?src=' + encodeURIComponent(exportUrl);
                     const iconUrl = item.sourceIcon || '/repo/logo.png';
-                    const isEnabled = item.enabled !== false;
                     
-                    const badge = isEnabled ? '' : '<div style="position:absolute; top:6px; right:6px; background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.25); font-size:8px; font-weight:bold; padding:1px 4px; border-radius:3px; transform: scale(0.9);">已失效</div>';
+                    let badge = '';
+                    if (status === 'valid') {
+                        badge = '<div style="position:absolute; top:6px; right:6px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.25); font-size:8px; font-weight:bold; padding:1px 4px; border-radius:3px; transform: scale(0.9);">有效</div>';
+                    }
                     
-                    const importBtn = isEnabled 
-                        ? '<a href="javascript:void(0);" onclick="triggerRssImport(\'' + importUrl + '\', \'' + item.sourceName.replace(/'/g, "\\'") + '\')" class="res-btn" style="width:80%; font-size:0.7rem; padding:4px 0; border-radius:6px; min-width:auto;">导入此源</a>' 
-                        : '<a href="javascript:void(0);" class="res-btn" style="width:80%; font-size:0.7rem; padding:4px 0; border-radius:6px; min-width:auto; cursor:not-allowed; background:rgba(239,68,68,0.06); color:#ef4444; border:1px solid rgba(239,68,68,0.15); pointer-events:none;">已标记失效</a>';
+                    const importBtn = '<a href="javascript:void(0);" onclick="triggerRssImport(\'' + importUrl + '\', \'' + item.sourceName.replace(/'/g, "\\'") + '\')" class="res-btn" style="width:80%; font-size:0.7rem; padding:4px 0; border-radius:6px; min-width:auto;">导入此源</a>';
                     
-                    const pcOpenBtn = item.sourceUrl 
+                    const isValidUrl = item.sourceUrl && (item.sourceUrl.indexOf('http://') === 0 || item.sourceUrl.indexOf('https://') === 0);
+                    const pcOpenBtn = isValidUrl 
                         ? '<a href="' + item.sourceUrl + '" target="_blank" rel="noopener noreferrer" class="res-btn" style="width:80%; font-size:0.7rem; padding:4px 0; border-radius:6px; min-width:auto; margin-top:6px; background:rgba(255,255,255,0.04); color:#cbd5e1; border:1px solid rgba(255,255,255,0.08);">电脑端打开</a>' 
                         : '';
                     
-                    html += '<div class="res-item" style="padding:15px 10px; min-height:auto; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;' + (isEnabled ? '' : ' opacity:0.65;') + '">' +
+                    html += '<div class="res-item" style="padding:15px 10px; min-height:auto; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">' +
                             badge +
                             '<div style="width:48px; height:48px; border-radius:12px; background:rgba(255,255,255,0.03); display:flex; align-items:center; justify-content:center; margin-bottom:8px; border:1px solid rgba(255,255,255,0.05);">' +
                             '<img src="' + iconUrl + '" style="width:36px; height:36px; border-radius:8px; object-fit:contain;" onerror="this.src=\'/repo/logo.png\'">' +

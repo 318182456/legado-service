@@ -38,7 +38,7 @@ export interface RssSource {
   sourceGroup: string;
   sourceIcon: string;
   sourceUrl: string;
-  enabled: boolean;
+  status: 'none' | 'valid' | 'invalid';
 }
 
 // ---------- Token 持久化 ----------
@@ -250,10 +250,10 @@ export const saveSystemConfig = (config: Record<string, string>) =>
 
 export const getRssSources = () => apiFetch<RssSource[]>("/api/rss-sources");
 
-export const toggleRssSource = (index: number, enabled: boolean) =>
+export const toggleRssSource = (index: number, status: 'none' | 'valid' | 'invalid') =>
   apiFetch<any>("/api/rss-sources/toggle", {
     method: "POST",
-    body: JSON.stringify({ index, enabled })
+    body: JSON.stringify({ index, status })
   });
 
 

@@ -103,15 +103,18 @@ export async function handleListRssSources(env: Env): Promise<Response> {
     const list = data.map((item: any, index: number) => {
       const rawUrl = (item.sourceUrl || "").trim();
       const firstLineUrl = rawUrl.split('\n')[0].trim();
-      const cleanUrl = (firstLineUrl.startsWith('http://') || firstLineUrl.startsWith('https://')) ? firstLineUrl : "";
       
+      let status: 'none' | 'valid' | 'invalid' = 'none';
+      if (item.enabled === true) status = 'valid';
+      else if (item.enabled === false) status = 'invalid';
+
       return {
         index,
         sourceName: item.sourceName || "未命名订阅源",
         sourceGroup: item.sourceGroup || "无分组",
         sourceIcon: item.sourceIcon || "",
-        sourceUrl: cleanUrl,
-        enabled: item.enabled !== false
+        sourceUrl: firstLineUrl,
+        status: status
       };
     });
     return new Response(JSON.stringify({ ok: true, data: list }), {
@@ -152,9 +155,9 @@ export async function handleExportRssSource(env: Env, indexStr: string): Promise
 export async function handleToggleRssSource(request: Request, env: Env): Promise<Response> {
   try {
     const body = await request.json() as any;
-    const { index, enabled } = body;
-    if (typeof index !== "number") {
-      return new Response(JSON.stringify({ ok: false, error: "index is required and must be a number" }), {
+    const { index, status } = body;
+    if (typeof index !== "number" || !status) {
+      return new Response(JSON.stringify({ ok: false, error: "index and status are required" }), {
         status: 400,
         headers: { "Content-Type": "application/json; charset=utf-8" }
       });
@@ -177,7 +180,13 @@ export async function handleToggleRssSource(request: Request, env: Env): Promise
       });
     }
 
-    data[index].enabled = !!enabled;
+    if (status === 'valid') {
+      data[index].enabled = true;
+    } else if (status === 'invalid') {
+      data[index].enabled = false;
+    } else {
+      delete data[index].enabled; // 删除键以恢复未标记默认状态
+    }
 
     // Save changes back to R2/local assets directory
     await env.ASSETS_R2.put("mochen_sources.json", JSON.stringify(data, null, 2));
