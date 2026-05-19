@@ -26,11 +26,12 @@ export default function SourceListView({
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [cleaning, setCleaning] = useState(false);
+  const [excludeDuplicate, setExcludeDuplicate] = useState(false);
 
-  const fetchSources = async (q = '', p = 1, f = 'all') => {
+  const fetchSources = async (q = '', p = 1, f = 'all', exDup = false) => {
     setLoading(true);
     try {
-      const data = await api.getSources(q, p, f);
+      const data = await api.getSources(q, p, f, exDup);
       setSources(data.sources);
       setTotal(data.total);
       setTotalPages(data.totalPages);
@@ -45,13 +46,13 @@ export default function SourceListView({
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchSources(query, 1, filter);
+      fetchSources(query, 1, filter, excludeDuplicate);
     }, 500);
     return () => clearTimeout(timer);
-  }, [query, filter]);
+  }, [query, filter, excludeDuplicate]);
 
   const handleLocalTest = (ids: number[]) => {
-    onTest(ids, () => fetchSources(query, page, filter));
+    onTest(ids, () => fetchSources(query, page, filter, excludeDuplicate));
   };
 
   const handleLocalTestAll = () => {
@@ -67,7 +68,7 @@ export default function SourceListView({
       try {
         const res = await api.cleanupSources();
         // 先刷新页面数据和统计卡片，再弹出阻断式 alert，保证卡片上的统计数字和弹窗报告百分之百实时一致
-        await fetchSources(query, 1, filter);
+        await fetchSources(query, 1, filter, excludeDuplicate);
         alert(`全库测试与自动标记完成！\n- 自动禁用并归类失效书源: ${res.markedInvalid} 个\n- 自动禁用并归类重复书源: ${res.markedDuplicates} 个`);
       } catch (e) {
         alert('自动标记清理失败: ' + String(e));
@@ -167,6 +168,16 @@ export default function SourceListView({
               <option value="unavailable">仅看不可用</option>
             </select>
 
+            <label className="flex items-center gap-1.5 text-xs font-bold bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 select-none cursor-pointer hover:bg-surface-container-low transition-colors shrink-0">
+              <input 
+                type="checkbox"
+                checked={excludeDuplicate}
+                onChange={(e) => setExcludeDuplicate(e.target.checked)}
+                className="rounded border-outline text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer"
+              />
+              排除重复
+            </label>
+
             <div className="relative flex-1 md:w-48">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" size={14} />
               <input 
@@ -218,7 +229,7 @@ export default function SourceListView({
               if (confirm('确定要清空所有书源吗？此操作不可撤销！')) {
                 try {
                   await api.deleteAllSources();
-                  fetchSources(query, 1);
+                  fetchSources(query, 1, filter, excludeDuplicate);
                 } catch (e) {
                   alert('删除失败: ' + String(e));
                 }
@@ -231,7 +242,7 @@ export default function SourceListView({
           </button>
 
           <button 
-            onClick={() => fetchSources(query, page, filter)}
+            onClick={() => fetchSources(query, page, filter, excludeDuplicate)}
             className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors"
           >
             <RefreshCw size={16} className={loading && testingIds.size === 0 ? 'animate-spin' : ''} />
@@ -367,7 +378,7 @@ export default function SourceListView({
           
           <div className="flex items-center gap-1">
             <button
-              onClick={() => fetchSources(query, page - 1, filter)}
+              onClick={() => fetchSources(query, page - 1, filter, excludeDuplicate)}
               disabled={page <= 1 || loading}
               className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="上一页"
@@ -380,7 +391,7 @@ export default function SourceListView({
             </div>
             
             <button
-              onClick={() => fetchSources(query, page + 1, filter)}
+              onClick={() => fetchSources(query, page + 1, filter, excludeDuplicate)}
               disabled={page >= totalPages || loading}
               className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="下一页"

@@ -15,8 +15,9 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
   const limit = Math.max(5, Number(url.searchParams.get("limit") || "10"));
   const offset = (page - 1) * limit;
+  const excludeDuplicate = url.searchParams.get("exclude_duplicate") === "true" || url.searchParams.get("exclude_duplicate") === "1";
 
-  console.log(`[ListSources] 查询书源列表: q="${q}", filter=${filter}, page=${page}, limit=${limit}`);
+  console.log(`[ListSources] 查询书源列表: q="${q}", filter=${filter}, excludeDuplicate=${excludeDuplicate}, page=${page}, limit=${limit}`);
 
   let where = "name LIKE ?";
   const params: any[] = [`%${q}%`];
@@ -27,12 +28,21 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
     where += " AND is_available = 0";
   }
 
+  if (excludeDuplicate) {
+    where += " AND (group_name IS NULL OR group_name NOT LIKE '%重复%')";
+  }
+
   const { results: sources } = await env.DB.prepare(
     `SELECT * FROM sources WHERE ${where} LIMIT ? OFFSET ?`
   ).bind(...params, limit, offset).all();
 
   const totalRow = (await env.DB.prepare(`SELECT COUNT(*) as count FROM sources WHERE ${where}`).bind(...params).first()) as any;
-  const statsRow = (await env.DB.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN is_available=1 THEN 1 ELSE 0 END) as available FROM sources").first()) as any;
+
+  let statsQuery = "SELECT COUNT(*) as total, SUM(CASE WHEN is_available=1 THEN 1 ELSE 0 END) as available FROM sources";
+  if (excludeDuplicate) {
+    statsQuery += " WHERE (group_name IS NULL OR group_name NOT LIKE '%重复%')";
+  }
+  const statsRow = (await env.DB.prepare(statsQuery).first()) as any;
 
   return ok({
     sources,
