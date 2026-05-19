@@ -1,0 +1,49 @@
+{
+  "name": "legado-service",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "start": "tsx entry.node.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@simplewebauthn/server": "^10.0.0",
+    "@simplewebauthn/types": "^10.0.0",
+    "@types/qrcode": "^1.5.6",
+    "fflate": "^0.8.2",
+    "fs-extra": "^11.2.0",
+    "hono": "^4.6.1",
+    "ioredis": "^5.4.1",
+    "mime-types": "^2.1.35",
+    "pg": "^8.13.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@simplewebauthn/browser": "^10.0.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/fs-extra": "^11.0.4",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.10",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  },
+  "volta": {
+    "node": "22.22.2",
+    "npm": "10.9.8"
+  }
+}
