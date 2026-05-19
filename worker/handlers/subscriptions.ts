@@ -5,6 +5,8 @@ import {
   parseBody,
   syncSourceSubscription,
   syncRuleSubscription,
+  syncTxtTocRuleSubscription,
+  syncDictRuleSubscription,
   rebuildCache,
 } from "../utils";
 import { runWorkerPool } from "./worker-runner";
@@ -15,7 +17,7 @@ export async function handleListSubscriptions(env: Env): Promise<Response> {
 }
 
 export async function handleAddSubscription(request: Request, env: Env, ctx?: any): Promise<Response> {
-  const body = await parseBody<{ name?: string; url: string; type: "source" | "rule" }>(request);
+  const body = await parseBody<{ name?: string; url: string; type: "source" | "rule" | "txtTocRule" | "dictRule" }>(request);
   if (!body?.url) return err("url 不能为空");
   const { meta } = await env.DB.prepare("INSERT INTO subscriptions (name, url, type) VALUES (?, ?, ?)").bind(body.name ?? "", body.url, body.type).run();
   const newId = Number(meta.last_row_id);
@@ -23,7 +25,9 @@ export async function handleAddSubscription(request: Request, env: Env, ctx?: an
   const runInitialSync = async () => {
     try {
       if (body.type === "source") await syncSourceSubscription(env, newId, body.url);
-      else await syncRuleSubscription(env, newId, body.url);
+      else if (body.type === "rule") await syncRuleSubscription(env, newId, body.url);
+      else if (body.type === "txtTocRule") await syncTxtTocRuleSubscription(env, newId, body.url);
+      else if (body.type === "dictRule") await syncDictRuleSubscription(env, newId, body.url);
       await rebuildCache(env, body.type);
       console.log(`新订阅 [${body.name || body.url}] 首次后台同步与缓存重建已完成。`);
     } catch (e) {
@@ -55,7 +59,13 @@ export async function handleToggleSubscription(request: Request, env: Env, id: n
   await env.DB.prepare("UPDATE subscriptions SET enabled=? WHERE id=? AND enabled != ?").bind(enabled, id, enabled).run();
   const sub = (await env.DB.prepare("SELECT type FROM subscriptions WHERE id=?").bind(id).first()) as any;
   if (sub) {
-    const table = sub.type === "source" ? "sources" : "rules";
+    const table = sub.type === "source"
+      ? "sources"
+      : sub.type === "rule"
+        ? "rules"
+        : sub.type === "txtTocRule"
+          ? "txt_toc_rules"
+          : "dict_rules";
     await env.DB.prepare(`UPDATE ${table} SET enabled=? WHERE subscription_id=? AND enabled != ?`).bind(enabled, id, enabled).run();
     await rebuildCache(env, sub.type);
   }
@@ -98,8 +108,12 @@ export async function handleSync(env: Env, id: number | null, ctx?: any): Promis
             let count = 0;
             if (sub.type === "source") {
               count = await syncSourceSubscription(env, sub.id, sub.url, msg.rawItems);
-            } else {
+            } else if (sub.type === "rule") {
               count = await syncRuleSubscription(env, sub.id, sub.url, msg.rawItems);
+            } else if (sub.type === "txtTocRule") {
+              count = await syncTxtTocRuleSubscription(env, sub.id, sub.url, msg.rawItems);
+            } else if (sub.type === "dictRule") {
+              count = await syncDictRuleSubscription(env, sub.id, sub.url, msg.rawItems);
             }
             console.log(`[Sync] 订阅 [${sub.name || sub.url}] 数据库同步成功，入库 ${count} 个项目，耗时: ${Date.now() - subStart}ms`);
           } catch (dbErr: any) {
@@ -115,7 +129,12 @@ export async function handleSync(env: Env, id: number | null, ctx?: any): Promis
     });
 
     console.log("[Sync] 正在重新构建全局缓存...");
-    await Promise.all([rebuildCache(env, "source"), rebuildCache(env, "rule")]);
+    await Promise.all([
+      rebuildCache(env, "source"),
+      rebuildCache(env, "rule"),
+      rebuildCache(env, "txtTocRule"),
+      rebuildCache(env, "dictRule")
+    ]);
     console.log(`[Sync] 全局同步任务与缓存重建已圆满完成，总耗时: ${Date.now() - startTime}ms`);
   };
 

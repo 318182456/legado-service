@@ -6,9 +6,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_STR = fs.readFileSync(path.join(__dirname, "subscribe.html"), "utf-8");
 
-export async function handleSubscribeOutput(env: Env, type: "sources" | "rules"): Promise<Response> {
+export async function handleSubscribeOutput(env: Env, type: "sources" | "rules" | "txtTocRules" | "dictRules"): Promise<Response> {
   try {
-    const cacheKey = type === "sources" ? "sources" : "rules";
+    const cacheKey = type === "sources" ? "sources" : type === "rules" ? "rules" : type === "txtTocRules" ? "txtTocRules" : "dictRules";
     const cached = await env.KV.get(cacheKey);
     if (cached) {
       return new Response(cached, {
@@ -35,11 +35,29 @@ export async function handleSubscribeOutput(env: Env, type: "sources" | "rules")
         }
       });
       jsonArray = "[" + sources.join(",") + "]";
-    } else {
+    } else if (type === "rules") {
       const { results } = await env.DB.prepare(`
         SELECT raw_json FROM rules 
         WHERE id IN (
           SELECT MIN(id) FROM rules WHERE enabled=1 GROUP BY name, pattern
+        ) 
+        ORDER BY id
+      `).all();
+      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
+    } else if (type === "txtTocRules") {
+      const { results } = await env.DB.prepare(`
+        SELECT raw_json FROM txt_toc_rules 
+        WHERE id IN (
+          SELECT MIN(id) FROM txt_toc_rules WHERE enabled=1 GROUP BY name, rule_hash
+        ) 
+        ORDER BY id
+      `).all();
+      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
+    } else if (type === "dictRules") {
+      const { results } = await env.DB.prepare(`
+        SELECT raw_json FROM dict_rules 
+        WHERE id IN (
+          SELECT MIN(id) FROM dict_rules WHERE enabled=1 GROUP BY name
         ) 
         ORDER BY id
       `).all();
@@ -71,6 +89,8 @@ export async function handleSubscribeIndex(request: Request, env: Env): Promise<
     .replace(/{{ORIGIN}}/g, origin)
     .replace(/{{SOURCES_URL}}/g, encodeURIComponent(origin + '/subscribe/sources'))
     .replace(/{{RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/rules'))
+    .replace(/{{TXT_TOC_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/txtTocRules'))
+    .replace(/{{DICT_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/dictRules'))
     .replace(/{{INFO_URL}}/g, encodeURIComponent(origin + '/subscribe/info.json'));
 
   return new Response(html, {

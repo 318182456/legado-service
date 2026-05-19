@@ -4,6 +4,7 @@ import {
   err,
   parseBody,
   rebuildCache,
+  hashText,
 } from "../utils";
 import { runWorkerPool } from "./worker-runner";
 
@@ -510,5 +511,75 @@ export async function handleCleanupSources(env: Env): Promise<Response> {
     return err(`标记清理失败: ${e.message || e}`, 500);
   }
 }
+
+export async function handleImportSources(request: Request, env: Env): Promise<Response> {
+  const body = await parseBody<{ sources: any[] }>(request);
+  const sourcesArray = body?.sources;
+  if (!Array.isArray(sourcesArray) || sourcesArray.length === 0) return err("无有效书源数据");
+
+  let manualSub = (await env.DB.prepare("SELECT id FROM subscriptions WHERE url = 'manual_sources'").first()) as any;
+  if (!manualSub) {
+    const { meta } = await env.DB.prepare("INSERT INTO subscriptions (name, url, type) VALUES ('手动添加书源', 'manual_sources', 'source')").run();
+    manualSub = { id: meta.last_row_id };
+  }
+
+  const subId = manualSub.id;
+  let count = 0;
+  const BATCH = 50;
+
+  for (let i = 0; i < sourcesArray.length; i += BATCH) {
+    const chunk = sourcesArray.slice(i, i + BATCH);
+    const stmts = chunk.map(async (src) => {
+      const bsUrl = String(src.bookSourceUrl ?? src.sourceUrl ?? "").trim();
+      const name = String(src.bookSourceName ?? src.name ?? "未知书源").trim();
+      if (!bsUrl || !name) return null;
+
+      const group = String(src.bookSourceGroup ?? src.group ?? "");
+      const rawJson = JSON.stringify(src);
+      
+      let testUrl = bsUrl;
+      try {
+        const searchUrl = src.searchUrl;
+        if (typeof searchUrl === 'string' && searchUrl) {
+          let urlPart = searchUrl.split(',{')[0];
+          urlPart = urlPart.replace(/\{\{key\}\}/g, encodeURIComponent('我的'));
+          if (urlPart.startsWith('http')) {
+            testUrl = urlPart;
+          } else {
+            try {
+              testUrl = new URL(urlPart, bsUrl).toString();
+            } catch (_) {
+              testUrl = bsUrl.replace(/\/$/, '') + '/' + urlPart.replace(/^\//, '');
+            }
+          }
+        }
+      } catch (_) {}
+
+      const urlHash = await hashText(bsUrl);
+
+      return env.DB.prepare(
+        `INSERT INTO sources (subscription_id, book_source_url, name, group_name, raw_json, test_url, url_hash, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(subscription_id, url_hash)
+         DO UPDATE SET name=excluded.name, group_name=excluded.group_name,
+                       raw_json=excluded.raw_json, test_url=excluded.test_url, updated_at=excluded.updated_at`
+      ).bind(subId, bsUrl, name, group, rawJson, testUrl, urlHash);
+    });
+
+    const resolvedStmts = (await Promise.all(stmts)).filter(x => x !== null) as any[];
+    if (resolvedStmts.length > 0) {
+      await env.DB.batch(resolvedStmts);
+      count += resolvedStmts.length;
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE subscriptions SET last_synced=datetime('now'), item_count=(SELECT COUNT(*) FROM sources WHERE subscription_id=?) WHERE id=?`
+  ).bind(subId, subId).run();
+
+  await rebuildCache(env, "source");
+  return ok({ imported: count });
+}
+
 
 

@@ -252,9 +252,159 @@ export async function syncRuleSubscription(
 }
 
 /**
- * 重建 KV 缓存（sources / rules）
+ * 使目录规则订阅与 D1 同步，返回入库数量
  */
-export async function rebuildCache(env: Env, type: "source" | "rule") {
+export async function syncTxtTocRuleSubscription(
+  env: Env,
+  subId: number,
+  url: string,
+  preFetchedItems?: any[]
+): Promise<number> {
+  const rawItems = preFetchedItems ?? await fetchRules(url);
+  
+  const itemsMap = new Map<string, Record<string, unknown>>();
+  for (const r of rawItems) {
+    if (typeof r !== "object" || r === null) continue;
+    const rule = r as Record<string, unknown>;
+    const name = String(rule["name"] ?? "").trim();
+    const rulePattern = String(rule["rule"] ?? "").trim();
+    
+    if (!name || !rulePattern) continue;
+    itemsMap.set(name + "::" + rulePattern, rule);
+  }
+  
+  const items = Array.from(itemsMap.values());
+  let count = 0;
+
+  const BATCH = 50;
+  for (let i = 0; i < items.length; i += BATCH) {
+    const chunk = items.slice(i, i + BATCH);
+    const stmts = chunk
+      .map(async (rule) => {
+        const name = String(rule["name"] ?? "").trim();
+        const rulePattern = String(rule["rule"] ?? "").trim();
+        const example = rule["example"] ? String(rule["example"]) : null;
+        const serialNumber = Number(rule["serialNumber"] ?? rule["serial_number"] ?? -1);
+        const enabled = rule["enable"] ?? rule["enabled"] ?? true ? 1 : 0;
+        
+        const normalizedRule = {
+          ...rule,
+          name,
+          rule: rulePattern,
+          example,
+          serialNumber,
+          enable: !!enabled
+        };
+        
+        const rawJson = JSON.stringify(normalizedRule);
+        const ruleHash = await hashText(rulePattern);
+
+        return env.DB.prepare(
+          `INSERT INTO txt_toc_rules (subscription_id, name, rule, example, serial_number, enabled, raw_json, rule_hash, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(subscription_id, name, rule_hash)
+           DO UPDATE SET example=excluded.example, serial_number=excluded.serial_number,
+                         enabled=excluded.enabled, raw_json=excluded.raw_json, updated_at=excluded.updated_at
+           WHERE txt_toc_rules.raw_json != excluded.raw_json`
+        ).bind(subId, name, rulePattern, example, serialNumber, enabled, rawJson, ruleHash);
+      });
+    
+    const resolvedStmts = await Promise.all(stmts);
+
+    if (resolvedStmts.length > 0) {
+      await env.DB.batch(resolvedStmts);
+      count += resolvedStmts.length;
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
+  )
+    .bind(count, subId)
+    .run();
+
+  return count;
+}
+
+/**
+ * 使字典规则订阅与 D1 同步，返回入库数量
+ */
+export async function syncDictRuleSubscription(
+  env: Env,
+  subId: number,
+  url: string,
+  preFetchedItems?: any[]
+): Promise<number> {
+  const rawItems = preFetchedItems ?? await fetchRules(url);
+  
+  const itemsMap = new Map<string, Record<string, unknown>>();
+  for (const r of rawItems) {
+    if (typeof r !== "object" || r === null) continue;
+    const rule = r as Record<string, unknown>;
+    const name = String(rule["name"] ?? "").trim();
+    const urlRule = String(rule["urlRule"] ?? rule["url_rule"] ?? "").trim();
+    
+    if (!name || !urlRule) continue;
+    itemsMap.set(name, rule);
+  }
+  
+  const items = Array.from(itemsMap.values());
+  let count = 0;
+
+  const BATCH = 50;
+  for (let i = 0; i < items.length; i += BATCH) {
+    const chunk = items.slice(i, i + BATCH);
+    const stmts = chunk
+      .map(async (rule) => {
+        const name = String(rule["name"] ?? "").trim();
+        const urlRule = String(rule["urlRule"] ?? rule["url_rule"] ?? "").trim();
+        const showRule = String(rule["showRule"] ?? rule["show_rule"] ?? "");
+        const sortNumber = Number(rule["sortNumber"] ?? rule["sort_number"] ?? 0);
+        const enabled = rule["enabled"] ?? rule["enable"] ?? true ? 1 : 0;
+        
+        const normalizedRule = {
+          ...rule,
+          name,
+          urlRule,
+          showRule,
+          sortNumber,
+          enabled: !!enabled
+        };
+        
+        const rawJson = JSON.stringify(normalizedRule);
+
+        return env.DB.prepare(
+          `INSERT INTO dict_rules (subscription_id, name, url_rule, show_rule, enabled, sort_number, raw_json, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(subscription_id, name)
+           DO UPDATE SET url_rule=excluded.url_rule, show_rule=excluded.show_rule,
+                         enabled=excluded.enabled, sort_number=excluded.sort_number,
+                         raw_json=excluded.raw_json, updated_at=excluded.updated_at
+           WHERE dict_rules.raw_json != excluded.raw_json`
+        ).bind(subId, name, urlRule, showRule, enabled, sortNumber, rawJson);
+      });
+    
+    const resolvedStmts = await Promise.all(stmts);
+
+    if (resolvedStmts.length > 0) {
+      await env.DB.batch(resolvedStmts);
+      count += resolvedStmts.length;
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
+  )
+    .bind(count, subId)
+    .run();
+
+  return count;
+}
+
+/**
+ * 重建 KV 缓存
+ */
+export async function rebuildCache(env: Env, type: "source" | "rule" | "txtTocRule" | "dictRule") {
   if (type === "source") {
     // 跨订阅全局去重：使用 url_hash 避免长文本索引限制
     const rows = await env.DB.prepare(
@@ -275,7 +425,7 @@ export async function rebuildCache(env: Env, type: "source" | "rule") {
     await env.KV.put("sources", mergedStr, {
       expirationTtl: CACHE_TTL,
     });
-  } else {
+  } else if (type === "rule") {
     // 净化规则去重：按 name 和 pattern_hash 去重
     const rows = await env.DB.prepare(
       `SELECT raw_json FROM rules WHERE id IN (SELECT MIN(id) FROM rules WHERE enabled=1 GROUP BY name, pattern_hash) ORDER BY id`
@@ -286,8 +436,31 @@ export async function rebuildCache(env: Env, type: "source" | "rule") {
     await env.KV.put("rules", mergedStr, {
       expirationTtl: CACHE_TTL,
     });
+  } else if (type === "txtTocRule") {
+    // 目录规则去重：按 name 和 rule_hash 去重
+    const rows = await env.DB.prepare(
+      `SELECT raw_json FROM txt_toc_rules WHERE id IN (SELECT MIN(id) FROM txt_toc_rules WHERE enabled=1 GROUP BY name, rule_hash) ORDER BY id`
+    ).all();
+    
+    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
+
+    await env.KV.put("txtTocRules", mergedStr, {
+      expirationTtl: CACHE_TTL,
+    });
+  } else if (type === "dictRule") {
+    // 字典规则去重：按 name 去重
+    const rows = await env.DB.prepare(
+      `SELECT raw_json FROM dict_rules WHERE id IN (SELECT MIN(id) FROM dict_rules WHERE enabled=1 GROUP BY name) ORDER BY id`
+    ).all();
+    
+    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
+
+    await env.KV.put("dictRules", mergedStr, {
+      expirationTtl: CACHE_TTL,
+    });
   }
 }
+
 
 // ─── Passkey 工具 ────────────────────────────────────────────────
 

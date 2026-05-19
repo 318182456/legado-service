@@ -298,6 +298,15 @@
             box-shadow: 0 6px 22px rgba(139, 92, 246, 0.55);
         }
         
+        .btn-v { 
+            background: linear-gradient(135deg, #10b981, #059669); 
+            color: white; 
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+        }
+        .btn-v:hover {
+            box-shadow: 0 6px 22px rgba(16, 185, 129, 0.55);
+        }
+        
         .btn-d { 
             background: rgba(239, 68, 68, 0.08); 
             color: #f87171; 
@@ -520,6 +529,14 @@
             <h3>
                 <img src="/repo/logo.png" alt="icon" class="item-icon" />
                 <a href="legado://import/replaceRule?src={{RULES_URL}}" class="btn btn-s">✨ 导入全量净化规则</a>
+            </h3>
+            <h3>
+                <img src="/repo/logo.png" alt="icon" class="item-icon" />
+                <a href="legado://import/txtTocRule?src={{TXT_TOC_RULES_URL}}" class="btn btn-t">📖 导入全量目录规则</a>
+            </h3>
+            <h3>
+                <img src="/repo/logo.png" alt="icon" class="item-icon" />
+                <a href="legado://import/dictRule?src={{DICT_RULES_URL}}" class="btn btn-v">🔍 导入全量字典规则</a>
             </h3>
             <h3>
                 <img src="/repo/logo.png" alt="icon" class="item-icon" />

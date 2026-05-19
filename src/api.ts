@@ -15,7 +15,7 @@ export interface Subscription {
   id: number;
   name: string;
   url: string;
-  type: "source" | "rule";
+  type: "source" | "rule" | "txtTocRule" | "dictRule";
   enabled: number;
   last_synced: string | null;
   item_count: number;
@@ -162,6 +162,24 @@ export const cleanupSources = () => apiFetch<{ markedInvalid: number; markedDupl
 export const toggleRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
 export const deleteRule = (id: number) => apiFetch<any>(`/api/rules/${id}`, { method: "DELETE" });
 export const updateRule = (id: number, data: { name: string; pattern: string; replacement: string }) => apiFetch<any>(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+export const getTxtTocRules = (q = "", page = 1) => apiFetch<any[]>(`/api/txt-toc-rules?q=${q}&page=${page}`);
+export const addTxtTocRule = (data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>("/api/txt-toc-rules", { method: "POST", body: JSON.stringify(data) });
+export const updateTxtTocRule = (id: number, data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const toggleTxtTocRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
+export const deleteTxtTocRule = (id: number) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "DELETE" });
+export const importTxtTocRules = (rules: any[]) => apiFetch<any>("/api/txt-toc-rules/import", { method: "POST", body: JSON.stringify({ rules }) });
+
+export const getDictRules = (q = "", page = 1) => apiFetch<any[]>(`/api/dict-rules?q=${q}&page=${page}`);
+export const addDictRule = (data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>("/api/dict-rules", { method: "POST", body: JSON.stringify(data) });
+export const updateDictRule = (id: number, data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const toggleDictRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
+export const deleteDictRule = (id: number) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "DELETE" });
+export const importDictRules = (rules: any[]) => apiFetch<any>("/api/dict-rules/import", { method: "POST", body: JSON.stringify({ rules }) });
+
+export const importReplaceRules = (rules: any[]) => apiFetch<any>("/api/rules/import", { method: "POST", body: JSON.stringify({ rules }) });
+export const importSources = (sources: any[]) => apiFetch<any>("/api/sources/import", { method: "POST", body: JSON.stringify({ sources }) });
+
 export const parseLinks = (url: string) => apiFetch<{ name: string; url: string }[]>(`/api/parse-links?url=${encodeURIComponent(url)}`);
 
 export const getCustomThemes = () => apiFetch<any[]>(`/api/custom-themes?t=${Date.now()}`);

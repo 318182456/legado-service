@@ -5,6 +5,7 @@ import * as api from '../api';
 interface SubscriptionViewProps {
   onImport: () => void;
   onExplore: () => void;
+  onJsonImport: () => void;
 }
 
 const formatDate = (dateInput: string | number | Date) => {
@@ -26,7 +27,7 @@ const formatDate = (dateInput: string | number | Date) => {
   }
 };
 
-export default function SubscriptionView({ onImport, onExplore }: SubscriptionViewProps) {
+export default function SubscriptionView({ onImport, onExplore, onJsonImport }: SubscriptionViewProps) {
   const [subs, setSubs] = useState<api.Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState<number | null>(null);
@@ -104,6 +105,13 @@ export default function SubscriptionView({ onImport, onExplore }: SubscriptionVi
             从网页导入数据
           </button>
           <button 
+            onClick={onJsonImport}
+            className="flex items-center gap-2 px-4 py-2 bg-secondary text-on-secondary rounded-lg text-sm font-bold hover:opacity-90 transition-all shadow-sm"
+          >
+            <Plus size={18} />
+            智能 JSON 导入
+          </button>
+          <button 
             onClick={onImport}
             className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-bold hover:opacity-90 transition-all shadow-sm"
           >
@@ -124,17 +132,35 @@ export default function SubscriptionView({ onImport, onExplore }: SubscriptionVi
             <div key={sub.id} className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm flex items-center justify-between group">
               <div className="flex items-center gap-4 flex-1 min-w-0">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
-                  sub.type === 'source' ? 'bg-primary-container/20 text-primary' : 'bg-tertiary-container/20 text-tertiary'
+                  sub.type === 'source' 
+                    ? 'bg-primary-container/20 text-primary' 
+                    : sub.type === 'rule'
+                      ? 'bg-tertiary-container/20 text-tertiary'
+                      : sub.type === 'txtTocRule'
+                        ? 'bg-secondary-container/20 text-secondary'
+                        : 'bg-success-container/20 text-success'
                 }`}>
-                  {sub.type === 'source' ? <ListRestart size={24} /> : <Sparkles size={24} />}
+                  {sub.type === 'source' 
+                    ? <ListRestart size={24} /> 
+                    : sub.type === 'rule'
+                      ? <Sparkles size={24} />
+                      : sub.type === 'txtTocRule'
+                        ? <ListRestart size={24} />
+                        : <Globe size={24} />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h4 className="font-bold truncate">{sub.name || '未命名订阅'}</h4>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                      sub.type === 'source' ? 'bg-primary text-on-primary' : 'bg-tertiary text-on-tertiary'
+                      sub.type === 'source'
+                        ? 'bg-primary text-on-primary'
+                        : sub.type === 'rule'
+                          ? 'bg-tertiary text-on-tertiary'
+                          : sub.type === 'txtTocRule'
+                            ? 'bg-secondary text-on-secondary'
+                            : 'bg-success text-on-success'
                     }`}>
-                      {sub.type === 'source' ? '书源' : '规则'}
+                      {sub.type === 'source' ? '书源' : sub.type === 'rule' ? '规则' : sub.type === 'txtTocRule' ? '目录' : '字典'}
                     </span>
                   </div>
                   <p className="text-xs text-secondary truncate font-mono mt-1">{sub.url}</p>

@@ -4,6 +4,7 @@ import {
   err,
   parseBody,
   rebuildCache,
+  hashText,
 } from "../utils";
 
 export async function handleListRules(env: Env, url: URL): Promise<Response> {
@@ -83,3 +84,63 @@ export async function handleRuleAction(env: Env, id: number, action: string, req
   await rebuildCache(env, "rule");
   return ok();
 }
+
+export async function handleImportRules(request: Request, env: Env): Promise<Response> {
+  const body = await parseBody<{ rules: any[] }>(request);
+  const rulesArray = body?.rules;
+  if (!Array.isArray(rulesArray) || rulesArray.length === 0) return err("无有效规则数据");
+
+  let manualSub = (await env.DB.prepare("SELECT id FROM subscriptions WHERE url = 'manual_rules'").first()) as any;
+  if (!manualSub) {
+    const { meta } = await env.DB.prepare("INSERT INTO subscriptions (name, url, type) VALUES ('手动添加规则', 'manual_rules', 'rule')").run();
+    manualSub = { id: meta.last_row_id };
+  }
+
+  const subId = manualSub.id;
+  let count = 0;
+  const BATCH = 50;
+
+  for (let i = 0; i < rulesArray.length; i += BATCH) {
+    const chunk = rulesArray.slice(i, i + BATCH);
+    const stmts = chunk.map(async (rule) => {
+      const name = String(rule.name ?? "").trim();
+      const pattern = String(rule.pattern ?? "").trim();
+      if (!name || !pattern) return null;
+
+      const replacement = rule.replacement ? String(rule.replacement) : "";
+      const enabled = rule.enabled ?? rule.isEnabled ?? true ? 1 : 0;
+      
+      const normalizedRule = {
+        ...rule,
+        name,
+        pattern,
+        replacement,
+        isEnabled: !!enabled
+      };
+      
+      const rawJson = JSON.stringify(normalizedRule);
+      const patternHash = await hashText(pattern);
+
+      return env.DB.prepare(
+        `INSERT INTO rules (subscription_id, name, pattern, replacement, enabled, raw_json, pattern_hash, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(subscription_id, name, pattern_hash)
+         DO UPDATE SET replacement=excluded.replacement, enabled=excluded.enabled, raw_json=excluded.raw_json, updated_at=excluded.updated_at`
+      ).bind(subId, name, pattern, replacement, enabled, rawJson, patternHash);
+    });
+
+    const resolvedStmts = (await Promise.all(stmts)).filter(x => x !== null) as any[];
+    if (resolvedStmts.length > 0) {
+      await env.DB.batch(resolvedStmts);
+      count += resolvedStmts.length;
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE subscriptions SET last_synced=datetime('now'), item_count=(SELECT COUNT(*) FROM rules WHERE subscription_id=?) WHERE id=?`
+  ).bind(subId, subId).run();
+
+  await rebuildCache(env, "rule");
+  return ok({ imported: count });
+}
+

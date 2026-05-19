@@ -18,6 +18,8 @@ import * as subscribe from "./handlers/subscribe";
 import * as system from "./handlers/system";
 import { handleScheduled } from "./handlers/scheduled";
 import { proxyToReader } from "./handlers/proxy";
+import * as txtTocRules from "./handlers/txt-toc-rules";
+import * as dictRules from "./handlers/dict-rules";
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -75,6 +77,8 @@ export default {
       // ── /subscribe/* (公开) ───────────────────────────────────────
       if (path === "/subscribe/sources" && method === "GET") return subscribe.handleSubscribeOutput(env, "sources");
       if (path === "/subscribe/rules" && method === "GET") return subscribe.handleSubscribeOutput(env, "rules");
+      if (path === "/subscribe/txtTocRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "txtTocRules");
+      if (path === "/subscribe/dictRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "dictRules");
       if (path === "/subscribe/index" && method === "GET") return subscribe.handleSubscribeIndex(request, env);
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
 
@@ -135,12 +139,14 @@ export default {
       if (path === "/api/sources/test/progress" && method === "GET") return sources.handleGetTestProgress(env);
       if (path === "/api/sources/cleanup" && method === "POST") return sources.handleCleanupSources(env);
       if (path === "/api/sources/all" && method === "DELETE") return sources.handleSourceAction(env, 0, "delete-all");
+      if (path === "/api/sources/import" && method === "POST") return sources.handleImportSources(request, env);
       if (path === "/api/parse-links" && method === "GET") return sources.handleParseLinks(url);
 
       if (path === "/api/rules") {
         if (method === "GET") return rules.handleListRules(env, url);
         if (method === "POST") return rules.handleAddRule(request, env);
       }
+      if (path === "/api/rules/import" && method === "POST") return rules.handleImportRules(request, env);
 
       const srcMatch = path.match(/^\/api\/sources\/(\d+)$/);
       if (srcMatch) {
@@ -155,6 +161,36 @@ export default {
         if (method === "DELETE") return rules.handleRuleAction(env, id, "delete");
         if (method === "PATCH") return rules.handleRuleAction(env, id, "toggle", request);
         if (method === "PUT") return rules.handleRuleAction(env, id, "update", request);
+      }
+
+      // ── /api/txt-toc-rules ────────────────────────────────────────
+      if (path === "/api/txt-toc-rules") {
+        if (method === "GET") return txtTocRules.handleListTxtTocRules(env, url);
+        if (method === "POST") return txtTocRules.handleAddTxtTocRule(request, env);
+      }
+      if (path === "/api/txt-toc-rules/import" && method === "POST") return txtTocRules.handleImportTxtTocRules(request, env);
+
+      const txtTocMatch = path.match(/^\/api\/txt-toc-rules\/(\d+)$/);
+      if (txtTocMatch) {
+        const id = Number(txtTocMatch[1]);
+        if (method === "DELETE") return txtTocRules.handleTxtTocRuleAction(env, id, "delete");
+        if (method === "PATCH") return txtTocRules.handleTxtTocRuleAction(env, id, "toggle", request);
+        if (method === "PUT") return txtTocRules.handleTxtTocRuleAction(env, id, "update", request);
+      }
+
+      // ── /api/dict-rules ───────────────────────────────────────────
+      if (path === "/api/dict-rules") {
+        if (method === "GET") return dictRules.handleListDictRules(env, url);
+        if (method === "POST") return dictRules.handleAddDictRule(request, env);
+      }
+      if (path === "/api/dict-rules/import" && method === "POST") return dictRules.handleImportDictRules(request, env);
+
+      const dictMatch = path.match(/^\/api\/dict-rules\/(\d+)$/);
+      if (dictMatch) {
+        const id = Number(dictMatch[1]);
+        if (method === "DELETE") return dictRules.handleDictRuleAction(env, id, "delete");
+        if (method === "PATCH") return dictRules.handleDictRuleAction(env, id, "toggle", request);
+        if (method === "PUT") return dictRules.handleDictRuleAction(env, id, "update", request);
       }
 
       // ── /repo/* (R2 资源代理) ───────────────────────────────────

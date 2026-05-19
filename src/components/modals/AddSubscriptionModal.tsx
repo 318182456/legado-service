@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Plus, RefreshCw, Link, Tag, ListRestart, Sparkles } from 'lucide-react';
+import { X, Plus, RefreshCw, Link, Tag, ListRestart, Sparkles, Globe } from 'lucide-react';
 import * as api from '../../api';
 
 interface AddSubscriptionModalProps {
@@ -12,7 +12,7 @@ interface AddSubscriptionModalProps {
 export function AddSubscriptionModal({ isOpen, onClose, onAdded }: AddSubscriptionModalProps) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
-  const [type, setType] = useState<'source' | 'rule'>('source');
+  const [type, setType] = useState<'source' | 'rule' | 'txtTocRule' | 'dictRule'>('source');
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -91,11 +91,11 @@ export function AddSubscriptionModal({ isOpen, onClose, onAdded }: AddSubscripti
             <label className="text-xs font-bold text-secondary flex items-center gap-2 ml-1">
               订阅类型
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <button
                 type="button"
                 onClick={() => setType('source')}
-                className={`flex items-center justify-center gap-2 py-3 rounded-xl border-2 transition-all font-bold text-sm ${
+                className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border-2 transition-all font-bold text-xs ${
                   type === 'source' 
                   ? 'border-primary bg-primary/5 text-primary' 
                   : 'border-outline-variant bg-surface text-secondary hover:bg-surface-container'
@@ -107,7 +107,7 @@ export function AddSubscriptionModal({ isOpen, onClose, onAdded }: AddSubscripti
               <button
                 type="button"
                 onClick={() => setType('rule')}
-                className={`flex items-center justify-center gap-2 py-3 rounded-xl border-2 transition-all font-bold text-sm ${
+                className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border-2 transition-all font-bold text-xs ${
                   type === 'rule' 
                   ? 'border-tertiary bg-tertiary/5 text-tertiary' 
                   : 'border-outline-variant bg-surface text-secondary hover:bg-surface-container'
@@ -115,6 +115,30 @@ export function AddSubscriptionModal({ isOpen, onClose, onAdded }: AddSubscripti
               >
                 <Sparkles size={18} />
                 规则订阅
+              </button>
+              <button
+                type="button"
+                onClick={() => setType('txtTocRule')}
+                className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border-2 transition-all font-bold text-xs ${
+                  type === 'txtTocRule' 
+                  ? 'border-secondary bg-secondary/5 text-secondary' 
+                  : 'border-outline-variant bg-surface text-secondary hover:bg-surface-container'
+                }`}
+              >
+                <ListRestart size={18} />
+                目录订阅
+              </button>
+              <button
+                type="button"
+                onClick={() => setType('dictRule')}
+                className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border-2 transition-all font-bold text-xs ${
+                  type === 'dictRule' 
+                  ? 'border-success bg-success/5 text-success' 
+                  : 'border-outline-variant bg-surface text-secondary hover:bg-surface-container'
+                }`}
+              >
+                <Globe size={18} />
+                字典订阅
               </button>
             </div>
           </div>
@@ -140,7 +164,7 @@ export function AddSubscriptionModal({ isOpen, onClose, onAdded }: AddSubscripti
 
         <div className="px-6 py-4 bg-surface-container-low border-t border-outline-variant">
           <p className="text-[10px] text-secondary leading-relaxed">
-            * 订阅添加后将自动触发同步。如果是书源订阅，程序会解析并存入书源库；如果是规则订阅，则存入净化规则库。
+            * 订阅添加后将自动触发同步。系统会按类型解析并分别存入书源库、净化规则库、目录规则库或字典规则库。
           </p>
         </div>
       </motion.div>

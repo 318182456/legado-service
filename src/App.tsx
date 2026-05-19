@@ -9,7 +9,9 @@ import {
   Sparkles, 
   ShieldCheck, 
   Package,
-  BookOpen
+  BookOpen,
+  List,
+  Compass
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as api from './api';
@@ -21,6 +23,9 @@ import { IconButton } from './components/IconButton';
 // Modals
 import { AddSubscriptionModal } from './components/modals/AddSubscriptionModal';
 import { AddRuleModal } from './components/modals/AddRuleModal';
+import { AddTxtTocRuleModal } from './components/modals/AddTxtTocRuleModal';
+import { AddDictRuleModal } from './components/modals/AddDictRuleModal';
+import JsonImportModal from './components/JsonImportModal';
 import { WebDiscoveryModal } from './components/modals/WebDiscoveryModal';
 
 // Views
@@ -29,8 +34,13 @@ import DashboardView from './views/DashboardView';
 import SubscriptionView from './views/SubscriptionView';
 import SourceListView from './views/SourceListView';
 import RulesView from './views/RulesView';
-import AssetsView from './views/AssetsView';
+import TxtTocRulesView from './views/TxtTocRulesView';
+import DictRulesView from './views/DictRulesView';
+import bgAssetsView from './views/AssetsView';
 import SettingsView from './views/SettingsView';
+
+// Wait, let's keep AssetsView imported as AssetsView, let's fix that
+import AssetsView from './views/AssetsView';
 
 export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -42,6 +52,11 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isAddRuleModalOpen, setIsAddRuleModalOpen] = useState(false);
   const [editRuleData, setEditRuleData] = useState<any>(null);
+  const [isAddTxtTocModalOpen, setIsAddTxtTocModalOpen] = useState(false);
+  const [editTxtTocData, setEditTxtTocData] = useState<any>(null);
+  const [isAddDictModalOpen, setIsAddDictModalOpen] = useState(false);
+  const [editDictData, setEditDictData] = useState<any>(null);
+  const [isJsonImportModalOpen, setIsJsonImportModalOpen] = useState(false);
   const [isDiscoveryModalOpen, setIsDiscoveryModalOpen] = useState(false);
   const [versionInfo, setVersionInfo] = useState<any>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -209,16 +224,17 @@ export default function App() {
 
   const renderActiveView = useMemo(() => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView onImport={() => setIsAddModalOpen(true)} />;
+      case 'dashboard': return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} />;
       case 'subscriptions': return (
         <SubscriptionView 
           onImport={() => setIsAddModalOpen(true)} 
           onExplore={() => setIsDiscoveryModalOpen(true)} 
+          onJsonImport={() => setIsJsonImportModalOpen(true)}
         />
       );
       case 'sources': return (
         <SourceListView 
-          onImport={() => setIsAddModalOpen(true)}
+          onImport={() => setIsJsonImportModalOpen(true)}
           testingIds={testingIds}
           testProgress={testProgress}
           isTestingAll={isTestingAll}
@@ -238,9 +254,33 @@ export default function App() {
           }}
         />
       );
+      case 'txt-toc-rules': return (
+        <TxtTocRulesView 
+          onAdd={() => {
+            setEditTxtTocData(null);
+            setIsAddTxtTocModalOpen(true);
+          }} 
+          onEdit={(rule) => {
+            setEditTxtTocData(rule);
+            setIsAddTxtTocModalOpen(true);
+          }}
+        />
+      );
+      case 'dict-rules': return (
+        <DictRulesView 
+          onAdd={() => {
+            setEditDictData(null);
+            setIsAddDictModalOpen(true);
+          }} 
+          onEdit={(rule) => {
+            setEditDictData(rule);
+            setIsAddDictModalOpen(true);
+          }}
+        />
+      );
       case 'assets': return <AssetsView />;
       case 'settings': return <SettingsView />;
-      default: return <DashboardView onImport={() => setIsAddModalOpen(true)} />;
+      default: return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} />;
     }
   }, [activeTab, testingIds, testProgress, isTestingAll, handleTest, handleTestAll]);
 
@@ -271,7 +311,9 @@ export default function App() {
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label={isSidebarOpen ? "控制台" : ""} />
           <NavItem active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} icon={<ListRestart size={20} />} label={isSidebarOpen ? "订阅管理" : ""} />
           <NavItem active={activeTab === 'sources'} onClick={() => setActiveTab('sources')} icon={<ShieldCheck size={20} />} label={isSidebarOpen ? "书源管理" : ""} />
-          <NavItem active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} icon={<Sparkles size={20} />} label={isSidebarOpen ? "净化规则" : ""} />
+          <NavItem active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} icon={<Sparkles size={20} />} label={isSidebarOpen ? "替换净化" : ""} />
+          <NavItem active={activeTab === 'txt-toc-rules'} onClick={() => setActiveTab('txt-toc-rules')} icon={<List size={20} />} label={isSidebarOpen ? "目录规则" : ""} />
+          <NavItem active={activeTab === 'dict-rules'} onClick={() => setActiveTab('dict-rules')} icon={<Compass size={20} />} label={isSidebarOpen ? "字典规则" : ""} />
           <div className="my-4 border-t border-outline-variant/30" />
           <NavItem active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<Package size={20} />} label={isSidebarOpen ? "资源管理 (R2)" : ""} />
           <NavItem active={false} onClick={() => window.open('/reader3/', '_blank')} icon={<BookOpen size={20} />} label={isSidebarOpen ? "在线阅读" : ""} />
@@ -359,6 +401,41 @@ export default function App() {
           window.dispatchEvent(new CustomEvent('refresh-data'));
         }}
       />
+
+      <AddTxtTocRuleModal
+        isOpen={isAddTxtTocModalOpen}
+        editData={editTxtTocData}
+        onClose={() => {
+          setIsAddTxtTocModalOpen(false);
+          setEditTxtTocData(null);
+        }}
+        onAdded={() => {
+          setIsAddTxtTocModalOpen(false);
+          setEditTxtTocData(null);
+          window.dispatchEvent(new CustomEvent('refresh-data'));
+        }}
+      />
+
+      <AddDictRuleModal
+        isOpen={isAddDictModalOpen}
+        editData={editDictData}
+        onClose={() => {
+          setIsAddDictModalOpen(false);
+          setEditDictData(null);
+        }}
+        onAdded={() => {
+          setIsAddDictModalOpen(false);
+          setEditDictData(null);
+          window.dispatchEvent(new CustomEvent('refresh-data'));
+        }}
+      />
+
+      {isJsonImportModalOpen && (
+        <JsonImportModal
+          onClose={() => setIsJsonImportModalOpen(false)}
+          onSuccess={() => setIsJsonImportModalOpen(false)}
+        />
+      )}
 
       <WebDiscoveryModal
         isOpen={isDiscoveryModalOpen}
