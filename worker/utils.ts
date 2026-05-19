@@ -164,14 +164,19 @@ export async function syncSourceSubscription(
     }
   }
 
-  // 更新订阅状态
+  // 更新订阅状态（用实际行数而非语句数）
+  const actualCountRow = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM sources WHERE subscription_id=?`
+  ).bind(subId).first() as any;
+  const actualCount = actualCountRow?.cnt ?? count;
+
   await env.DB.prepare(
     `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
   )
-    .bind(count, subId)
+    .bind(actualCount, subId)
     .run();
 
-  return count;
+  return actualCount;
 }
 
 /**
@@ -242,13 +247,18 @@ export async function syncRuleSubscription(
     }
   }
 
+  const actualCountRow2 = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM rules WHERE subscription_id=?`
+  ).bind(subId).first() as any;
+  const actualCount2 = actualCountRow2?.cnt ?? count;
+
   await env.DB.prepare(
     `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
   )
-    .bind(count, subId)
+    .bind(actualCount2, subId)
     .run();
 
-  return count;
+  return actualCount2;
 }
 
 /**
@@ -317,13 +327,18 @@ export async function syncTxtTocRuleSubscription(
     }
   }
 
+  const actualCountRow3 = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM txt_toc_rules WHERE subscription_id=?`
+  ).bind(subId).first() as any;
+  const actualCount3 = actualCountRow3?.cnt ?? count;
+
   await env.DB.prepare(
     `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
   )
-    .bind(count, subId)
+    .bind(actualCount3, subId)
     .run();
 
-  return count;
+  return actualCount3;
 }
 
 /**
@@ -392,13 +407,18 @@ export async function syncDictRuleSubscription(
     }
   }
 
+  const actualCountRow4 = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM dict_rules WHERE subscription_id=?`
+  ).bind(subId).first() as any;
+  const actualCount4 = actualCountRow4?.cnt ?? count;
+
   await env.DB.prepare(
     `UPDATE subscriptions SET last_synced=datetime('now'), item_count=? WHERE id=?`
   )
-    .bind(count, subId)
+    .bind(actualCount4, subId)
     .run();
 
-  return count;
+  return actualCount4;
 }
 
 /**
@@ -411,53 +431,51 @@ export async function rebuildCache(env: Env, type: "source" | "rule" | "txtTocRu
       `SELECT raw_json, group_name FROM sources WHERE id IN (SELECT MIN(id) FROM sources WHERE enabled=1 GROUP BY url_hash) ORDER BY id`
     ).all();
     
-    const sources = rows.results.map((r: any) => {
+    // 安全 JSON 构建：验证每条 raw_json，跳过损坏数据
+    const items: string[] = [];
+    for (const r of rows.results as any[]) {
       try {
         const item = JSON.parse(r.raw_json);
         item.bookSourceGroup = r.group_name || "";
-        return JSON.stringify(item);
-      } catch (_) {
-        return r.raw_json;
-      }
-    });
-    const mergedStr = "[" + sources.join(",") + "]";
+        items.push(JSON.stringify(item));
+      } catch (_) { /* 跳过损坏数据，不污染整个缓存 */ }
+    }
+    const mergedStr = "[" + items.join(",") + "]";
     
-    await env.KV.put("sources", mergedStr, {
-      expirationTtl: CACHE_TTL,
-    });
+    await env.KV.put("sources", mergedStr, { expirationTtl: CACHE_TTL });
   } else if (type === "rule") {
     // 净化规则去重：按 name 和 pattern_hash 去重
     const rows = await env.DB.prepare(
       `SELECT raw_json FROM rules WHERE id IN (SELECT MIN(id) FROM rules WHERE enabled=1 GROUP BY name, pattern_hash) ORDER BY id`
     ).all();
     
-    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
-
-    await env.KV.put("rules", mergedStr, {
-      expirationTtl: CACHE_TTL,
-    });
+    const items: string[] = [];
+    for (const r of rows.results as any[]) {
+      try { JSON.parse(r.raw_json); items.push(r.raw_json as string); } catch (_) {}
+    }
+    await env.KV.put("rules", "[" + items.join(",") + "]", { expirationTtl: CACHE_TTL });
   } else if (type === "txtTocRule") {
     // 目录规则去重：按 name 和 rule_hash 去重
     const rows = await env.DB.prepare(
       `SELECT raw_json FROM txt_toc_rules WHERE id IN (SELECT MIN(id) FROM txt_toc_rules WHERE enabled=1 GROUP BY name, rule_hash) ORDER BY id`
     ).all();
     
-    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
-
-    await env.KV.put("txtTocRules", mergedStr, {
-      expirationTtl: CACHE_TTL,
-    });
+    const items: string[] = [];
+    for (const r of rows.results as any[]) {
+      try { JSON.parse(r.raw_json); items.push(r.raw_json as string); } catch (_) {}
+    }
+    await env.KV.put("txtTocRules", "[" + items.join(",") + "]", { expirationTtl: CACHE_TTL });
   } else if (type === "dictRule") {
     // 字典规则去重：按 name 去重
     const rows = await env.DB.prepare(
       `SELECT raw_json FROM dict_rules WHERE id IN (SELECT MIN(id) FROM dict_rules WHERE enabled=1 GROUP BY name) ORDER BY id`
     ).all();
     
-    const mergedStr = "[" + rows.results.map((r) => r.raw_json as string).join(",") + "]";
-
-    await env.KV.put("dictRules", mergedStr, {
-      expirationTtl: CACHE_TTL,
-    });
+    const items: string[] = [];
+    for (const r of rows.results as any[]) {
+      try { JSON.parse(r.raw_json); items.push(r.raw_json as string); } catch (_) {}
+    }
+    await env.KV.put("dictRules", "[" + items.join(",") + "]", { expirationTtl: CACHE_TTL });
   }
 }
 

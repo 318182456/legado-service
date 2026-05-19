@@ -3,6 +3,9 @@ import {
   ensureDatabase,
   syncSourceSubscription,
   syncRuleSubscription,
+  syncTxtTocRuleSubscription,
+  syncDictRuleSubscription,
+  rebuildCache,
 } from "../utils";
 
 export async function handleScheduled(env: Env) {
@@ -10,13 +13,15 @@ export async function handleScheduled(env: Env) {
     await ensureDatabase(env);
     console.log("Starting scheduled tasks...");
 
-    // 1. 同步所有启用订阅
+    // 1. 同步所有启用订阅（补全四种类型）
     const { results: subs } = await env.DB.prepare("SELECT * FROM subscriptions WHERE enabled = 1").all();
     for (const sub of subs as any[]) {
       try {
         console.log(`Syncing sub: ${sub.name} (${sub.url})`);
         if (sub.type === 'source') await syncSourceSubscription(env, sub.id, sub.url);
-        else await syncRuleSubscription(env, sub.id, sub.url);
+        else if (sub.type === 'rule') await syncRuleSubscription(env, sub.id, sub.url);
+        else if (sub.type === 'txtTocRule') await syncTxtTocRuleSubscription(env, sub.id, sub.url);
+        else if (sub.type === 'dictRule') await syncDictRuleSubscription(env, sub.id, sub.url);
       } catch (e) {
         console.error(`Sync failed for sub ${sub.id}:`, e);
       }
@@ -52,7 +57,15 @@ export async function handleScheduled(env: Env) {
       });
       await env.DB.batch(stmts);
     }
-    
+
+    // 3. 重建全局 KV 缓存
+    await Promise.all([
+      rebuildCache(env, "source"),
+      rebuildCache(env, "rule"),
+      rebuildCache(env, "txtTocRule"),
+      rebuildCache(env, "dictRule"),
+    ]);
+
     console.log("Scheduled tasks completed.");
   } catch (e) {
     console.error("Scheduled handler error:", e);

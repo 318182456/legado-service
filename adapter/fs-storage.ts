@@ -56,7 +56,7 @@ export class FileSystemR2 {
     };
   }
 
-  async put(key: string, value: any): Promise<void> {
+  async put(key: string, value: any, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<void> {
     const p = this.getPath(key);
     await fs.ensureDir(path.dirname(p));
     
@@ -64,22 +64,29 @@ export class FileSystemR2 {
       await fs.writeFile(p, Buffer.from(value));
     } else if (typeof value === 'string') {
       await fs.writeFile(p, value);
-    } else if (value.arrayBuffer) {
+    } else if (value?.arrayBuffer) {
       // 处理类似 Request/Response 的 body
       const ab = await value.arrayBuffer();
       await fs.writeFile(p, Buffer.from(ab));
     } else {
       await fs.writeFile(p, value);
     }
+
+    // 将 customMetadata 持久化为伴随文件，供 head() 读取
+    if (options?.customMetadata) {
+      await fs.writeJson(p + '.meta.json', options.customMetadata);
+    }
   }
 
   async delete(key: string): Promise<void> {
     const p = this.getPath(key);
     await fs.remove(p);
+    // 同时删除伴随元数据文件
+    await fs.remove(p + '.meta.json').catch(() => {});
   }
 
   async list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<any> {
-    // 递归列出所有文件
+    // 递归列出所有文件（过滤 .meta.json 伴随文件）
     const files: string[] = [];
     const prefix = options?.prefix || '';
     
@@ -93,7 +100,8 @@ export class FileSystemR2 {
         if (stat.isDirectory()) {
           await walk(fullPath);
         } else {
-          if (relPath.startsWith(prefix)) {
+          // 过滤掉元数据伴随文件
+          if (relPath.startsWith(prefix) && !relPath.endsWith('.meta.json')) {
             files.push(relPath);
           }
         }
@@ -121,15 +129,25 @@ export class FileSystemR2 {
     };
   }
 
-  async head(key: string): Promise<any> {
+  async head(key: string): Promise<{ size: number; httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> } | null> {
     const p = this.getPath(key);
     if (!(await fs.pathExists(p))) return null;
     const stat = await fs.stat(p);
+    
+    // 读取伴随的元数据文件
+    let customMetadata: Record<string, string> | undefined;
+    try {
+      if (await fs.pathExists(p + '.meta.json')) {
+        customMetadata = await fs.readJson(p + '.meta.json');
+      }
+    } catch (_) {}
+
     return {
       size: stat.size,
       httpMetadata: {
         contentType: mime.lookup(p) || 'application/octet-stream'
-      }
+      },
+      customMetadata,
     };
   }
 }

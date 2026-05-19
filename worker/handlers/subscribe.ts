@@ -2,11 +2,20 @@ import { Env } from "../types";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { rebuildCache } from "../utils";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_STR = fs.readFileSync(path.join(__dirname, "subscribe.html"), "utf-8");
 
-export async function handleSubscribeOutput(env: Env, type: "sources" | "rules" | "txtTocRules" | "dictRules"): Promise<Response> {
+/** 将 handleSubscribeOutput 的类型参数映射到 rebuildCache 的类型参数 */
+const TYPE_MAP = {
+  sources: "source",
+  rules: "rule",
+  txtTocRules: "txtTocRule",
+  dictRules: "dictRule",
+} as const;
+
+export async function handleSubscribeOutput(env: Env, type: keyof typeof TYPE_MAP): Promise<Response> {
   try {
     const cacheKey = type === "sources" ? "sources" : type === "rules" ? "rules" : type === "txtTocRules" ? "txtTocRules" : "dictRules";
     const cached = await env.KV.get(cacheKey);
@@ -16,54 +25,11 @@ export async function handleSubscribeOutput(env: Env, type: "sources" | "rules" 
       });
     }
 
-    let jsonArray = "[]";
-    if (type === "sources") {
-      const { results } = await env.DB.prepare(`
-        SELECT raw_json, group_name FROM sources 
-        WHERE id IN (
-          SELECT MIN(id) FROM sources WHERE enabled=1 GROUP BY book_source_url
-        ) 
-        ORDER BY id
-      `).all();
-      const sources = results.map((r: any) => {
-        try {
-          const item = JSON.parse(r.raw_json);
-          item.bookSourceGroup = r.group_name || "";
-          return JSON.stringify(item);
-        } catch (_) {
-          return r.raw_json;
-        }
-      });
-      jsonArray = "[" + sources.join(",") + "]";
-    } else if (type === "rules") {
-      const { results } = await env.DB.prepare(`
-        SELECT raw_json FROM rules 
-        WHERE id IN (
-          SELECT MIN(id) FROM rules WHERE enabled=1 GROUP BY name, pattern
-        ) 
-        ORDER BY id
-      `).all();
-      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
-    } else if (type === "txtTocRules") {
-      const { results } = await env.DB.prepare(`
-        SELECT raw_json FROM txt_toc_rules 
-        WHERE id IN (
-          SELECT MIN(id) FROM txt_toc_rules WHERE enabled=1 GROUP BY name, rule_hash
-        ) 
-        ORDER BY id
-      `).all();
-      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
-    } else if (type === "dictRules") {
-      const { results } = await env.DB.prepare(`
-        SELECT raw_json FROM dict_rules 
-        WHERE id IN (
-          SELECT MIN(id) FROM dict_rules WHERE enabled=1 GROUP BY name
-        ) 
-        ORDER BY id
-      `).all();
-      jsonArray = "[" + results.map(r => r.raw_json).join(",") + "]";
-    }
-    
+    // 缓存 MISS：调用 rebuildCache 重建并写入 KV，再读取返回（消除重复 SQL）
+    await rebuildCache(env, TYPE_MAP[type]);
+    const fresh = await env.KV.get(cacheKey);
+    const jsonArray = fresh ?? "[]";
+
     return new Response(jsonArray, {
       headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "MISS" },
     });

@@ -72,7 +72,8 @@ class PostgresPreparedStatement {
   }
 
   bind(...params: any[]) {
-    const stmt = new PostgresPreparedStatement(this.pool, this.query);
+    // 传入已翻译的 SQL 并跳过重复翻译（skipTranslation=true）
+    const stmt = new PostgresPreparedStatement(this.pool, this.query, true);
     stmt.params = params;
     return stmt;
   }

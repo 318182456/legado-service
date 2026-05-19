@@ -10,7 +10,7 @@ import {
 export async function handleListRules(env: Env, url: URL): Promise<Response> {
   const q = url.searchParams.get("q") || "";
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 50;
+  const limit = 20;
   const offset = (page - 1) * limit;
   const { results } = await env.DB.prepare(
     `SELECT * FROM rules WHERE name LIKE ? LIMIT ? OFFSET ?`

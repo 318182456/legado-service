@@ -23,10 +23,10 @@ export interface D1PreparedStatement {
 
 export interface R2Bucket {
   get(key: string, options?: { range?: string }): Promise<any>;
-  put(key: string, value: any, options?: { httpMetadata?: { contentType?: string } }): Promise<void>;
+  put(key: string, value: any, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<void>;
   delete(key: string): Promise<void>;
   list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<any>;
-  head(key: string): Promise<any>;
+  head(key: string): Promise<{ size: number; httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> } | null>;
 }
 
 // ─── 环境绑定 ────────────────────────────────────────────────────

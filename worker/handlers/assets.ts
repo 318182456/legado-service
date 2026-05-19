@@ -108,12 +108,12 @@ export async function handleResourcesRefresh(env: Env): Promise<Response> {
 }
 
 export async function handleR2List(request: Request, env: Env): Promise<Response> {
-  await checkAuth(request, env);
+  if (!checkAuth(request, env)) return err("Unauthorized", 401);
   const keys: string[] = [];
   let cursor: string | undefined;
   do {
     const listed = await env.ASSETS_R2.list({ limit: 1000, cursor });
-    listed.objects.forEach(obj => keys.push(obj.key));
+    listed.objects.forEach((obj: any) => keys.push(obj.key));
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
   return new Response(JSON.stringify({ ok: true, data: keys, total: keys.length }), {
@@ -362,7 +362,7 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
 
 /** 
  * 核心存储逻辑：计算哈希 -> 存入 R2 -> 更新 KV 索引
- * 支持去重复，如果内容一致则跳过上传
+ * 去重策略：将 SHA-256 哈希存入 R2 customMetadata，用 head() 比对，避免下载全量文件
  */
 async function saveAsset(
   env: Env, 
@@ -378,19 +378,17 @@ async function saveAsset(
   const decodedName = decodeURIComponent(name).split('/').pop() || name;
   const r2Key = `uploads/${category}/${decodedName}`;
 
-  // 2. 检查 R2 去重
-  const existing = await env.ASSETS_R2.get(r2Key);
-  if (existing) {
-    const existingBuffer = await existing.arrayBuffer();
-    const existingHashBuffer = await crypto.subtle.digest('SHA-256', existingBuffer);
-    const existingHashHex = Array.from(new Uint8Array(existingHashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    if (existingHashHex === hashHex) return r2Key;
+  // 2. 用 head() 获取已有对象的元数据，避免下载全量内容
+  const existingHead = await env.ASSETS_R2.head(r2Key);
+  if (existingHead) {
+    const existingHash = existingHead.customMetadata?.sha256;
+    if (existingHash === hashHex) return r2Key; // 内容一致，跳过上传
   }
 
-  // 3. 上传 R2
+  // 3. 上传 R2，将哈希写入 customMetadata
   await env.ASSETS_R2.put(r2Key, data, {
-    httpMetadata: contentType ? { contentType } : undefined
+    httpMetadata: contentType ? { contentType } : undefined,
+    customMetadata: { sha256: hashHex },
   });
 
   // 4. 更新 KV 索引

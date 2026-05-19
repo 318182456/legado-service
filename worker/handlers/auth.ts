@@ -20,7 +20,8 @@ import {
 } from "../utils";
 
 export function isAuthed(request: Request, env: Env): boolean {
-  const pwd = env.ADMIN_PASSWORD || env.API_SECRET || "admin888";
+  const pwd = env.ADMIN_PASSWORD || env.API_SECRET;
+  if (!pwd) return false; // 未配置密码，拒绝所有鉴权请求
   const auth = request.headers.get("Authorization") || "";
   return auth === `Bearer ${pwd}`;
 }
@@ -46,7 +47,8 @@ function getOrigins(request: Request): string | string[] {
 
 export async function handleLogin(request: Request, env: Env): Promise<Response> {
   const body = await parseBody<{ password?: string }>(request);
-  const pwd = env.ADMIN_PASSWORD || env.API_SECRET || "admin888";
+  const pwd = env.ADMIN_PASSWORD || env.API_SECRET;
+  if (!pwd) return err("服务未配置认证密码，请联系管理员", 500);
   if (body?.password === pwd) return ok({ token: pwd });
   return err("密码错误", 401);
 }
@@ -194,7 +196,8 @@ export async function handlePasskeyLoginFinish(request: Request, env: Env): Prom
         .run();
 
       await env.KV.delete("passkey:auth_challenge");
-      const pwd = env.ADMIN_PASSWORD || env.API_SECRET || "admin888";
+      const pwd = env.ADMIN_PASSWORD || env.API_SECRET;
+      if (!pwd) return err("服务未配置认证密码", 500);
       return ok({ token: pwd });
     }
   } catch (e) {

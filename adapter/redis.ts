@@ -45,10 +45,17 @@ export class RedisKV {
 
   async list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<any> {
     const pattern = this.prefix + (options?.prefix || '') + '*';
-    const keys = await this.redis.keys(pattern);
+    const keys: string[] = [];
+    let cursor = '0';
+
+    // 用 SCAN 迭代避免 KEYS 在大数据量时阻塞 Redis 主线程
+    do {
+      const [nextCursor, batch] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      keys.push(...batch);
+    } while (cursor !== '0');
+
     const sortedKeys = keys.sort();
-    
-    // 简化实现：Redis 的 keys 性能在大数据量下较差，但在本项目场景下足够
     return {
       keys: sortedKeys.map(k => ({ name: k.slice(this.prefix.length) })),
       list_complete: true,

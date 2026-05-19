@@ -35,11 +35,14 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
     where += " AND (group_name IS NULL OR group_name NOT LIKE '%重复%')";
   }
 
+  // 用窗口函数将分页数据与总计数合并为 1 条查询（减少 1 次 DB 往返）
   const { results: sources } = await env.DB.prepare(
-    `SELECT * FROM sources WHERE ${where} LIMIT ? OFFSET ?`
+    `SELECT *, COUNT(*) OVER() as _total FROM sources WHERE ${where} LIMIT ? OFFSET ?`
   ).bind(...params, limit, offset).all();
 
-  const totalRow = (await env.DB.prepare(`SELECT COUNT(*) as count FROM sources WHERE ${where}`).bind(...params).first()) as any;
+  const total: number = (sources[0] as any)?._total ?? 0;
+  // 去掉附加的内部字段，避免暴露给前端
+  sources.forEach((s: any) => { delete s._total; });
 
   let statsQuery = "SELECT COUNT(*) as total, SUM(CASE WHEN is_available=1 THEN 1 ELSE 0 END) as available FROM sources";
   if (excludeDuplicate) {
@@ -49,8 +52,8 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
 
   return ok({
     sources,
-    total: totalRow.count,
-    totalPages: Math.ceil(totalRow.count / limit),
+    total,
+    totalPages: Math.ceil(total / limit),
     stats: {
       total: statsRow.total || 0,
       available: statsRow.available || 0,
@@ -58,7 +61,7 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
     },
     page,
     limit,
-    hasMore: offset + sources.length < totalRow.count
+    hasMore: offset + sources.length < total
   });
 }
 

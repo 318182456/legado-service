@@ -73,14 +73,23 @@ serve({
 });
 
 // 模拟 Cloudflare Scheduled Events (定时任务)
-// 默认每 24 小时执行一次
+// 默认每 24 小时执行一次，带防重入机制
 const CRON_INTERVAL = 24 * 60 * 60 * 1000;
+let scheduledRunning = false;
+
 setInterval(async () => {
+  if (scheduledRunning) {
+    console.warn('[Cron] 上次定时任务尚未完成，跳过本次触发');
+    return;
+  }
+  scheduledRunning = true;
   console.log('Running scheduled tasks...');
   try {
     const ctx = { waitUntil: (p: Promise<any>) => p.catch(console.error) };
     await worker.scheduled({ scheduledTime: Date.now(), cron: '0 22 * * *' } as any, env, ctx);
   } catch (e) {
     console.error('Scheduled Task Failed:', e);
+  } finally {
+    scheduledRunning = false;
   }
 }, CRON_INTERVAL);

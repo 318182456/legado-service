@@ -143,9 +143,9 @@ export async function handleSync(env: Env, id: number | null, ctx?: any): Promis
     // 我们直接同步等待同步完成再返回 Response，而不是丢给后台运行。
     await runSync();
     return ok({ message: "Sync completed successfully" });
-  } catch (err: any) {
-    console.error("[Sync] 手动同步发生致命错误:", err);
-    return err(`同步发生异常: ${err.message || err}`, 500);
+  } catch (e: any) {
+    console.error("[Sync] 手动同步发生致命错误:", e);
+    return err(`同步发生异常: ${e.message || e}`, 500);
   }
 }
 
@@ -155,16 +155,29 @@ export async function handleImportSubscriptions(request: Request, env: Env): Pro
     const list = body?.subscriptions;
     if (!Array.isArray(list)) return err("订阅源列表必须是 JSON 数组");
 
-    let count = 0;
-    for (const item of list) {
-      if (!item.sourceUrl) continue;
+    // 过滤有效条目
+    const validItems = list.filter(item => !!item.sourceUrl);
+    if (validItems.length === 0) return ok({ imported: 0 });
 
-      // 智能根据分类名称推测其 type 类型
-      let type: "source" | "rule" | "txtTocRule" | "dictRule" = "source";
+    // 批量查询已存在的 URL，避免循环串行 N 次查询
+    const urls = validItems.map(item => item.sourceUrl);
+    const placeholders = urls.map(() => '?').join(',');
+    const existingRows = await env.DB.prepare(
+      `SELECT url FROM subscriptions WHERE url IN (${placeholders})`
+    ).bind(...urls).all();
+    const existingUrls = new Set<string>(existingRows.results.map((r: any) => r.url as string));
+
+    let count = 0;
+    const insertStmts: any[] = [];
+    const updateStmts: any[] = [];
+
+    for (const item of validItems) {
       const name = item.sourceName || "";
       const group = item.sourceGroup || "";
       const matchText = (name + " " + group).toLowerCase();
 
+      // 智能根据分类名称推测其 type 类型
+      let type: "source" | "rule" | "txtTocRule" | "dictRule" = "source";
       if (matchText.includes("规则") || matchText.includes("净化")) {
         type = "rule";
       } else if (matchText.includes("目录")) {
@@ -173,16 +186,25 @@ export async function handleImportSubscriptions(request: Request, env: Env): Pro
         type = "dictRule";
       }
 
-      // 根据 URL 判断数据库中是否已存在同名或同 URL 订阅，避免重复
-      const existing = await env.DB.prepare("SELECT id FROM subscriptions WHERE url=?").bind(item.sourceUrl).first() as any;
-      if (existing) {
-        // 更新现有订阅
-        await env.DB.prepare("UPDATE subscriptions SET name=? WHERE url=?").bind(name, item.sourceUrl).run();
+      if (existingUrls.has(item.sourceUrl)) {
+        // 更新现有订阅名称
+        updateStmts.push(
+          env.DB.prepare("UPDATE subscriptions SET name=? WHERE url=?").bind(name, item.sourceUrl)
+        );
       } else {
-        // 写入新订阅，默认启用 (enabled = 1)
-        await env.DB.prepare("INSERT INTO subscriptions (name, url, type, enabled) VALUES (?, ?, ?, 1)").bind(name, item.sourceUrl, type).run();
+        // 写入新订阅，默认启用
+        insertStmts.push(
+          env.DB.prepare("INSERT INTO subscriptions (name, url, type, enabled) VALUES (?, ?, ?, 1)")
+            .bind(name, item.sourceUrl, type)
+        );
         count++;
       }
+    }
+
+    // 批量执行所有写操作
+    const allStmts = [...insertStmts, ...updateStmts];
+    if (allStmts.length > 0) {
+      await env.DB.batch(allStmts);
     }
 
     return ok({ imported: count });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Plus, Trash2, BookOpen, MoreVertical, Pencil } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, BookOpen, MoreVertical, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as api from '../api';
 
 interface DictRulesViewProps {
@@ -11,12 +11,19 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
   const [rules, setRules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [query, setQuery] = useState('');
 
-  const fetchRules = async () => {
+  const fetchRules = async (q = '', p = 1) => {
     setLoading(true);
     try {
-      const data = await api.getDictRules();
-      setRules(data);
+      const data = await api.getDictRules(q, p);
+      setRules(data.rules);
+      setTotal(data.total);
+      setTotalPages(data.totalPages);
+      setPage(p);
     } catch (e) {
       console.error('获取字典规则失败', e);
     } finally {
@@ -25,10 +32,17 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
   };
 
   useEffect(() => {
-    fetchRules();
-    window.addEventListener('refresh-data', fetchRules);
-    return () => window.removeEventListener('refresh-data', fetchRules);
-  }, []);
+    const timer = setTimeout(() => {
+      fetchRules(query, 1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    const handler = () => fetchRules(query, page);
+    window.addEventListener('refresh-data', handler);
+    return () => window.removeEventListener('refresh-data', handler);
+  }, [query, page]);
 
   const handleToggle = async (id: number, enabled: boolean) => {
     try {
@@ -49,13 +63,14 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
     try {
       await api.deleteDictRule(id);
       setRules(prev => prev.filter(r => r.id !== id));
+      setTotal(prev => Math.max(0, prev - 1));
       setActiveMenu(null);
     } catch (e) {
       alert('删除失败: ' + String(e));
     }
   };
 
-  if (loading) {
+  if (loading && page === 1) {
     return (
       <div className="flex items-center justify-center h-64">
         <RefreshCw className="animate-spin text-primary" size={32} />
@@ -70,18 +85,28 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
           <h2 className="text-2xl font-bold tracking-tight">字典规则</h2>
           <p className="text-sm text-secondary mt-1">管理支持阅读器内置字典划词查询和展示的字典服务规则。</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={fetchRules}
-            className="p-2 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors"
+        <div className="flex w-full md:w-auto items-center gap-2">
+          <div className="relative flex-1 md:w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" size={14} />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索规则..."
+              className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg pl-9 pr-4 py-1.5 text-xs outline-none focus:border-primary transition-all"
+            />
+          </div>
+          <button
+            onClick={() => fetchRules(query, page)}
+            className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors shrink-0"
           >
-            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button 
+          <button
             onClick={onAdd}
-            className="bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-bold hover:opacity-90 transition-all flex items-center gap-2 shadow-sm"
+            className="bg-primary text-on-primary px-4 py-1.5 rounded-lg text-xs font-bold hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm shrink-0"
           >
-            <Plus size={18} />
+            <Plus size={16} />
             手动添加字典规则
           </button>
         </div>
@@ -130,7 +155,7 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
                       </div>
                     </td>
                     <td className="py-4 px-6 text-center">
-                      <button 
+                      <button
                         onClick={() => handleToggle(rule.id, !!rule.enabled)}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
                           rule.enabled ? 'bg-primary/10 text-primary' : 'bg-secondary/10 text-secondary'
@@ -141,7 +166,7 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
                       </button>
                     </td>
                     <td className="py-4 px-6 text-right relative">
-                      <button 
+                      <button
                         onClick={() => setActiveMenu(activeMenu === idx ? null : idx)}
                         className="p-1 text-secondary hover:text-primary transition-colors"
                       >
@@ -152,13 +177,13 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenu(null)} />
                           <div className="absolute right-6 top-10 w-24 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-xl z-20 py-1 overflow-hidden">
-                            <button 
+                            <button
                               onClick={() => handleEdit(rule)}
                               className="w-full text-left px-4 py-2 text-xs hover:bg-surface-container transition-colors flex items-center gap-2"
                             >
                               <Pencil size={14} /> 修正
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDelete(rule.id)}
                               className="w-full text-left px-4 py-2 text-xs hover:bg-error-container/20 text-error transition-colors flex items-center gap-2"
                             >
@@ -173,6 +198,39 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="px-4 py-3 border-t border-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-4 bg-surface-container-lowest">
+          <div className="text-xs text-secondary font-medium">
+            共 <span className="text-on-surface font-bold">{total.toLocaleString()}</span> 条字典规则
+            <span className="mx-2 opacity-30">|</span>
+            第 <span className="text-on-surface font-bold">{page}</span> / {totalPages} 页
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchRules(query, page - 1)}
+              disabled={page <= 1 || loading}
+              className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="上一页"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <div className="flex items-center px-3 h-8 rounded-lg border border-outline-variant bg-surface-container-low text-xs font-bold min-w-12 justify-center">
+              {page}
+            </div>
+
+            <button
+              onClick={() => fetchRules(query, page + 1)}
+              disabled={page >= totalPages || loading}
+              className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="下一页"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -164,14 +164,16 @@ export const toggleRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/
 export const deleteRule = (id: number) => apiFetch<any>(`/api/rules/${id}`, { method: "DELETE" });
 export const updateRule = (id: number, data: { name: string; pattern: string; replacement: string }) => apiFetch<any>(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const getTxtTocRules = (q = "", page = 1) => apiFetch<any[]>(`/api/txt-toc-rules?q=${q}&page=${page}`);
+export const getTxtTocRules = (q = "", page = 1) =>
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/txt-toc-rules?q=${q}&page=${page}`);
 export const addTxtTocRule = (data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>("/api/txt-toc-rules", { method: "POST", body: JSON.stringify(data) });
 export const updateTxtTocRule = (id: number, data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const toggleTxtTocRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
 export const deleteTxtTocRule = (id: number) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "DELETE" });
 export const importTxtTocRules = (rules: any[]) => apiFetch<any>("/api/txt-toc-rules/import", { method: "POST", body: JSON.stringify({ rules }) });
 
-export const getDictRules = (q = "", page = 1) => apiFetch<any[]>(`/api/dict-rules?q=${q}&page=${page}`);
+export const getDictRules = (q = "", page = 1) =>
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/dict-rules?q=${q}&page=${page}`);
 export const addDictRule = (data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>("/api/dict-rules", { method: "POST", body: JSON.stringify(data) });
 export const updateDictRule = (id: number, data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const toggleDictRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });

@@ -10,14 +10,22 @@ import {
 export async function handleListTxtTocRules(env: Env, url: URL): Promise<Response> {
   const q = url.searchParams.get("q") || "";
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 50;
+  const limit = 20;
   const offset = (page - 1) * limit;
-  
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM txt_toc_rules WHERE name LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?`
-  ).bind(`%${q}%`, limit, offset).all();
-  
-  return ok(results);
+
+  const [countRow, listResult] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) as cnt FROM txt_toc_rules WHERE name LIKE ?`).bind(`%${q}%`).first() as Promise<{ cnt: number }>,
+    env.DB.prepare(`SELECT * FROM txt_toc_rules WHERE name LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?`).bind(`%${q}%`, limit, offset).all(),
+  ]);
+
+  const total = (countRow as any)?.cnt ?? 0;
+  return ok({
+    rules: listResult.results,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+    page,
+    limit,
+  });
 }
 
 export async function handleAddTxtTocRule(request: Request, env: Env): Promise<Response> {
