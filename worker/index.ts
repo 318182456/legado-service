@@ -83,6 +83,7 @@ export default {
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
 
       if (path === "/api/rss-sources" && method === "GET") return subscribe.handleListRssSources(env);
+      if (path === "/api/rss-sources/toggle" && method === "POST") return subscribe.handleToggleRssSource(request, env);
       const rssExportMatch = path.match(/^\/api\/rss-sources\/(\d+)\/export$/);
       if (rssExportMatch && method === "GET") return subscribe.handleExportRssSource(env, rssExportMatch[1]);
 

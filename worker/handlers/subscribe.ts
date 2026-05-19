@@ -105,7 +105,8 @@ export async function handleListRssSources(env: Env): Promise<Response> {
       sourceName: item.sourceName || "未命名订阅源",
       sourceGroup: item.sourceGroup || "无分组",
       sourceIcon: item.sourceIcon || "",
-      sourceUrl: item.sourceUrl || ""
+      sourceUrl: item.sourceUrl || "",
+      enabled: item.enabled !== false
     }));
     return new Response(JSON.stringify({ ok: true, data: list }), {
       headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
@@ -141,4 +142,49 @@ export async function handleExportRssSource(env: Env, indexStr: string): Promise
     return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500 });
   }
 }
+
+export async function handleToggleRssSource(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = await request.json() as any;
+    const { index, enabled } = body;
+    if (typeof index !== "number") {
+      return new Response(JSON.stringify({ ok: false, error: "index is required and must be a number" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
+    const object = await env.ASSETS_R2.get("mochen_sources.json");
+    if (!object) {
+      return new Response(JSON.stringify({ ok: false, error: "mochen_sources.json not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
+    const text = await object.text();
+    const data = JSON.parse(text);
+    if (index < 0 || index >= data.length) {
+      return new Response(JSON.stringify({ ok: false, error: "Index out of bounds" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
+    data[index].enabled = !!enabled;
+
+    // Save changes back to R2/local assets directory
+    await env.ASSETS_R2.put("mochen_sources.json", JSON.stringify(data, null, 2));
+
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json; charset=utf-8" }
+    });
+  }
+}
+
 
