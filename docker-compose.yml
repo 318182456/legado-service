@@ -35,6 +35,7 @@ services:
             - READER_APP_SECURE=true
             - READER_APP_SECUREKEY=wal116266321
             - READER_APP_CACHECHAPTERCONTENT=true
+            - READER_SERVER_CONTEXTPATH=/reader3
         volumes:
             - ./storage:/storage
         restart: always
