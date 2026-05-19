@@ -5,7 +5,7 @@ services:
         ports:
             - 3008:3000
         environment:
-            - DATABASE_URL=postgres://legadosub:legadosub@postgres:5432/legadosub
+            - DATABASE_URL=postgres://legado:legado@postgres:5432/legado
             - REDIS_URL=redis://redis:6379
             - ASSETS_PATH=/app/assets
             - PORT=3000
