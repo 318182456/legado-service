@@ -148,3 +148,46 @@ export async function handleSync(env: Env, id: number | null, ctx?: any): Promis
     return err(`同步发生异常: ${err.message || err}`, 500);
   }
 }
+
+export async function handleImportSubscriptions(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = await parseBody<{ subscriptions?: any[] }>(request);
+    const list = body?.subscriptions;
+    if (!Array.isArray(list)) return err("订阅源列表必须是 JSON 数组");
+
+    let count = 0;
+    for (const item of list) {
+      if (!item.sourceUrl) continue;
+
+      // 智能根据分类名称推测其 type 类型
+      let type: "source" | "rule" | "txtTocRule" | "dictRule" = "source";
+      const name = item.sourceName || "";
+      const group = item.sourceGroup || "";
+      const matchText = (name + " " + group).toLowerCase();
+
+      if (matchText.includes("规则") || matchText.includes("净化")) {
+        type = "rule";
+      } else if (matchText.includes("目录")) {
+        type = "txtTocRule";
+      } else if (matchText.includes("字典")) {
+        type = "dictRule";
+      }
+
+      // 根据 URL 判断数据库中是否已存在同名或同 URL 订阅，避免重复
+      const existing = await env.DB.prepare("SELECT id FROM subscriptions WHERE url=?").bind(item.sourceUrl).first() as any;
+      if (existing) {
+        // 更新现有订阅
+        await env.DB.prepare("UPDATE subscriptions SET name=? WHERE url=?").bind(name, item.sourceUrl).run();
+      } else {
+        // 写入新订阅，默认启用 (enabled = 1)
+        await env.DB.prepare("INSERT INTO subscriptions (name, url, type, enabled) VALUES (?, ?, ?, 1)").bind(name, item.sourceUrl, type).run();
+        count++;
+      }
+    }
+
+    return ok({ imported: count });
+  } catch (e: any) {
+    return err(String(e.message || e), 500);
+  }
+}
+

@@ -91,7 +91,8 @@ export async function handleSubscribeIndex(request: Request, env: Env): Promise<
     .replace(/{{RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/rules'))
     .replace(/{{TXT_TOC_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/txtTocRules'))
     .replace(/{{DICT_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/dictRules'))
-    .replace(/{{INFO_URL}}/g, encodeURIComponent(origin + '/subscribe/info.json'));
+    .replace(/{{INFO_URL}}/g, encodeURIComponent(origin + '/subscribe/info.json'))
+    .replace(/{{RSS_ALL_URL}}/g, encodeURIComponent(origin + '/repo/mochen_sources.json'));
 
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8", "Access-Control-Allow-Origin": "*" },
@@ -122,3 +123,56 @@ export function handleSubscribeInfo(request: Request): Response {
   }];
   return new Response(JSON.stringify(source), { headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" } });
 }
+
+export async function handleListRssSources(env: Env): Promise<Response> {
+  try {
+    const object = await env.ASSETS_R2.get("mochen_sources.json");
+    if (!object) {
+      return new Response(JSON.stringify({ ok: true, data: [] }), {
+        headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+      });
+    }
+    const text = await object.text();
+    const data = JSON.parse(text);
+    const list = data.map((item: any, index: number) => ({
+      index,
+      sourceName: item.sourceName || "未命名订阅源",
+      sourceGroup: item.sourceGroup || "无分组",
+      sourceIcon: item.sourceIcon || "",
+      sourceUrl: item.sourceUrl || ""
+    }));
+    return new Response(JSON.stringify({ ok: true, data: list }), {
+      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+}
+
+export async function handleExportRssSource(env: Env, indexStr: string): Promise<Response> {
+  try {
+    const index = parseInt(indexStr, 10);
+    const object = await env.ASSETS_R2.get("mochen_sources.json");
+    if (!object) {
+      return new Response(JSON.stringify({ error: "mochen_sources.json not found" }), { status: 404 });
+    }
+    const text = await object.text();
+    const data = JSON.parse(text);
+    if (isNaN(index) || index < 0 || index >= data.length) {
+      return new Response(JSON.stringify({ error: "Index out of bounds" }), { status: 400 });
+    }
+    const singleSource = data[index];
+    return new Response(JSON.stringify([singleSource]), {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500 });
+  }
+}
+

@@ -99,5 +99,13 @@ export const SCHEMA_STATEMENTS = [
     `CREATE TABLE IF NOT EXISTS system_config (
     key   TEXT PRIMARY KEY,
     value TEXT
-  )`
+  )`,
+    `CREATE TABLE IF NOT EXISTS parse_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    url         TEXT    UNIQUE NOT NULL,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+  )`,
+    `DROP INDEX IF EXISTS idx_parse_history_url_unique`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_parse_history_url_unique ON parse_history(url)`,
+    `CREATE INDEX IF NOT EXISTS idx_parse_history_updated_at ON parse_history(updated_at)`
 ];

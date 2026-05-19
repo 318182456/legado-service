@@ -340,7 +340,7 @@ export async function handleSourceAction(env: Env, id: number, action: string, r
   return ok();
 }
 
-export async function handleParseLinks(url: URL): Promise<Response> {
+export async function handleParseLinks(env: Env, url: URL): Promise<Response> {
   const targetUrl = url.searchParams.get("url");
   if (!targetUrl) return err("url 不能为空");
 
@@ -440,6 +440,14 @@ export async function handleParseLinks(url: URL): Promise<Response> {
     }
 
     console.log(`[ParseLinks] 解析成功，在目标网页中共抽取出 ${results.length} 个有效的导入链接`);
+    try {
+      await env.DB.prepare(
+        `INSERT INTO parse_history (url, updated_at) VALUES (?, datetime('now'))
+         ON CONFLICT(url) DO UPDATE SET updated_at = datetime('now')`
+      ).bind(targetUrl).run();
+    } catch (dbErr) {
+      console.error("[ParseLinks] 写入解析历史至数据库失败:", dbErr);
+    }
     return ok(results);
   } catch (e) {
     const isTimeout = (e as Error).name === 'AbortError';
@@ -579,6 +587,36 @@ export async function handleImportSources(request: Request, env: Env): Promise<R
 
   await rebuildCache(env, "source");
   return ok({ imported: count });
+}
+
+export async function handleListParseHistory(env: Env): Promise<Response> {
+  console.log("[ListParseHistory] 获取网页解析历史记录...");
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT url FROM parse_history ORDER BY updated_at DESC LIMIT 10"
+    ).all();
+    return ok(results.map((r: any) => r.url));
+  } catch (e) {
+    console.error("[ListParseHistory] 获取解析历史失败:", e);
+    return err(`获取解析历史失败: ${(e as Error).message}`, 500);
+  }
+}
+
+export async function handleDeleteParseHistory(env: Env, url: URL): Promise<Response> {
+  const targetUrl = url.searchParams.get("url");
+  try {
+    if (targetUrl) {
+      console.log(`[DeleteParseHistory] 删除指定历史记录: ${targetUrl}`);
+      await env.DB.prepare("DELETE FROM parse_history WHERE url = ?").bind(targetUrl).run();
+    } else {
+      console.log("[DeleteParseHistory] 清空所有历史记录...");
+      await env.DB.prepare("DELETE FROM parse_history").run();
+    }
+    return ok();
+  } catch (e) {
+    console.error("[DeleteParseHistory] 删除解析历史失败:", e);
+    return err(`删除解析历史失败: ${(e as Error).message}`, 500);
+  }
 }
 
 

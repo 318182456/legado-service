@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Plus, Trash2, ShieldCheck, MoreVertical, Pencil } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, ShieldCheck, MoreVertical, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as api from '../api';
 
 interface RulesViewProps {
@@ -11,12 +11,19 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
   const [rules, setRules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [query, setQuery] = useState('');
 
-  const fetchRules = async () => {
+  const fetchRules = async (q = '', p = 1) => {
     setLoading(true);
     try {
-      const data = await api.getRules();
-      setRules(data);
+      const data = await api.getRules(q, p);
+      setRules(data.rules);
+      setTotal(data.total);
+      setTotalPages(data.totalPages);
+      setPage(p);
     } catch (e) {
       console.error('获取规则失败', e);
     } finally {
@@ -25,10 +32,17 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
   };
 
   useEffect(() => {
-    fetchRules();
-    window.addEventListener('refresh-data', fetchRules);
-    return () => window.removeEventListener('refresh-data', fetchRules);
-  }, []);
+    const timer = setTimeout(() => {
+      fetchRules(query, 1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    const handler = () => fetchRules(query, page);
+    window.addEventListener('refresh-data', handler);
+    return () => window.removeEventListener('refresh-data', handler);
+  }, [query, page]);
 
   const handleToggle = async (id: number, enabled: boolean) => {
     try {
@@ -49,13 +63,14 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
     try {
       await api.deleteRule(id);
       setRules(prev => prev.filter(r => r.id !== id));
+      setTotal(prev => Math.max(0, prev - 1));
       setActiveMenu(null);
     } catch (e) {
       alert('删除失败: ' + String(e));
     }
   };
 
-  if (loading) {
+  if (loading && page === 1) {
     return (
       <div className="flex items-center justify-center h-64">
         <RefreshCw className="animate-spin text-primary" size={32} />
@@ -70,18 +85,28 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
           <h2 className="text-2xl font-bold tracking-tight">净化规则</h2>
           <p className="text-sm text-secondary mt-1">管理自动替换、去除广告或修正内容的净化规则。</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full md:w-auto items-center gap-2">
+          <div className="relative flex-1 md:w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" size={14} />
+            <input 
+              type="text" 
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索规则..."
+              className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg pl-9 pr-4 py-1.5 text-xs outline-none focus:border-primary transition-all"
+            />
+          </div>
           <button 
-            onClick={fetchRules}
-            className="p-2 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors"
+            onClick={() => fetchRules(query, page)}
+            className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors shrink-0"
           >
-            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button 
             onClick={onAdd}
-            className="bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-bold hover:opacity-90 transition-all flex items-center gap-2 shadow-sm"
+            className="bg-primary text-on-primary px-4 py-1.5 rounded-lg text-xs font-bold hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm shrink-0"
           >
-            <Plus size={18} />
+            <Plus size={16} />
             手动添加规则
           </button>
         </div>
@@ -168,6 +193,39 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="px-4 py-3 border-t border-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-4 bg-surface-container-lowest">
+          <div className="text-xs text-secondary font-medium">
+            共 <span className="text-on-surface font-bold">{total.toLocaleString()}</span> 条净化规则
+            <span className="mx-2 opacity-30">|</span>
+            第 <span className="text-on-surface font-bold">{page}</span> / {totalPages} 页
+          </div>
+          
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchRules(query, page - 1)}
+              disabled={page <= 1 || loading}
+              className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="上一页"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            
+            <div className="flex items-center px-3 h-8 rounded-lg border border-outline-variant bg-surface-container-low text-xs font-bold min-w-12 justify-center">
+              {page}
+            </div>
+            
+            <button
+              onClick={() => fetchRules(query, page + 1)}
+              disabled={page >= totalPages || loading}
+              className="p-1.5 rounded-lg border border-outline-variant hover:bg-surface-container-low disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="下一页"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

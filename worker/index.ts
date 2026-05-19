@@ -82,6 +82,11 @@ export default {
       if (path === "/subscribe/index" && method === "GET") return subscribe.handleSubscribeIndex(request, env);
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
 
+      if (path === "/api/rss-sources" && method === "GET") return subscribe.handleListRssSources(env);
+      const rssExportMatch = path.match(/^\/api\/rss-sources\/(\d+)\/export$/);
+      if (rssExportMatch && method === "GET") return subscribe.handleExportRssSource(env, rssExportMatch[1]);
+
+
       // ── /api/auth (公开) ──────────────────────────────────────────
       if (path === "/api/auth/login" && method === "POST") return auth.handleLogin(request, env);
       if (path === "/api/auth/passkey/status" && method === "GET") return auth.handlePasskeyStatus(env);
@@ -95,10 +100,12 @@ export default {
           path === "/api/resources" || 
           path === "/api/stats" ||
           path === "/api/zip/list" ||
+          path === "/api/rss-sources" ||
           path.endsWith("/export")
         );
         if (!isPublicGet && !auth.isAuthed(request, env)) return err("Unauthorized", 401);
       }
+
 
       // ── /api/auth (鉴权) ──────────────────────────────────────────
       if (path === "/api/auth/passkey/register/begin" && method === "POST") return auth.handlePasskeyRegisterBegin(request, env);
@@ -122,6 +129,10 @@ export default {
         if (method === "GET") return subs.handleListSubscriptions(env);
         if (method === "POST") return subs.handleAddSubscription(request, env, ctx);
       }
+      if (path === "/api/subscriptions/import" && method === "POST") {
+        return subs.handleImportSubscriptions(request, env);
+      }
+
 
       const subMatch = path.match(/^\/api\/subscriptions\/(\d+)$/);
       if (subMatch) {
@@ -140,7 +151,11 @@ export default {
       if (path === "/api/sources/cleanup" && method === "POST") return sources.handleCleanupSources(env);
       if (path === "/api/sources/all" && method === "DELETE") return sources.handleSourceAction(env, 0, "delete-all");
       if (path === "/api/sources/import" && method === "POST") return sources.handleImportSources(request, env);
-      if (path === "/api/parse-links" && method === "GET") return sources.handleParseLinks(url);
+      if (path === "/api/parse-links" && method === "GET") return sources.handleParseLinks(env, url);
+      if (path === "/api/parse-history") {
+        if (method === "GET") return sources.handleListParseHistory(env);
+        if (method === "DELETE") return sources.handleDeleteParseHistory(env, url);
+      }
 
       if (path === "/api/rules") {
         if (method === "GET") return rules.handleListRules(env, url);

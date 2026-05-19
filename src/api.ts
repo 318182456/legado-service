@@ -144,7 +144,8 @@ export const syncOne = (id: number) => apiFetch<any>(`/api/sync/${id}`, { method
 export const getSources = (q = "", page = 1, filter = "all", excludeDuplicate = false) => 
   apiFetch<{ sources: any[], total: number, totalPages: number, stats: any, hasMore: boolean }>(`/api/sources?q=${q}&page=${page}&filter=${filter}&exclude_duplicate=${excludeDuplicate}`);
 export const getAllSourceIds = () => apiFetch<number[]>("/api/sources/ids");
-export const getRules = (q = "", page = 1) => apiFetch<any[]>(`/api/rules?q=${q}&page=${page}`);
+export const getRules = (q = "", page = 1) => 
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number, hasMore: boolean }>(`/api/rules?q=${q}&page=${page}`);
 export const addRule = (data: { name: string; pattern: string; replacement: string }) => apiFetch<any>("/api/rules", { method: "POST", body: JSON.stringify(data) });
 
 export const getResources = () => apiFetch<any>("/api/resources");
@@ -179,8 +180,13 @@ export const importDictRules = (rules: any[]) => apiFetch<any>("/api/dict-rules/
 
 export const importReplaceRules = (rules: any[]) => apiFetch<any>("/api/rules/import", { method: "POST", body: JSON.stringify({ rules }) });
 export const importSources = (sources: any[]) => apiFetch<any>("/api/sources/import", { method: "POST", body: JSON.stringify({ sources }) });
+export const importSubscriptions = (subscriptions: any[]) => apiFetch<any>("/api/subscriptions/import", { method: "POST", body: JSON.stringify({ subscriptions }) });
+
 
 export const parseLinks = (url: string) => apiFetch<{ name: string; url: string }[]>(`/api/parse-links?url=${encodeURIComponent(url)}`);
+export const getParseHistory = () => apiFetch<string[]>("/api/parse-history");
+export const deleteParseHistory = (url?: string) =>
+  apiFetch<any>(`/api/parse-history${url ? `?url=${encodeURIComponent(url)}` : ""}`, { method: "DELETE" });
 
 export const getCustomThemes = () => apiFetch<any[]>(`/api/custom-themes?t=${Date.now()}`);
 export const saveCustomTheme = (data: { name: string; config: string; preview_url?: string }) => 

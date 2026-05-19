@@ -15,7 +15,20 @@ export async function handleListRules(env: Env, url: URL): Promise<Response> {
   const { results } = await env.DB.prepare(
     `SELECT * FROM rules WHERE name LIKE ? LIMIT ? OFFSET ?`
   ).bind(`%${q}%`, limit, offset).all();
-  return ok(results);
+
+  const totalRow = (await env.DB.prepare(
+    `SELECT COUNT(*) as count FROM rules WHERE name LIKE ?`
+  ).bind(`%${q}%`).first()) as any;
+  const total = totalRow?.count || 0;
+
+  return ok({
+    rules: results,
+    total,
+    totalPages: Math.ceil(total / limit),
+    page,
+    limit,
+    hasMore: offset + results.length < total
+  });
 }
 
 export async function handleAddRule(request: Request, env: Env): Promise<Response> {

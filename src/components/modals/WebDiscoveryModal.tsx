@@ -22,8 +22,13 @@ export function WebDiscoveryModal({ isOpen, onClose, onAdded }: WebDiscoveryModa
 
   useEffect(() => {
     if (isOpen) {
-      const h = localStorage.getItem('parse_history');
-      if (h) setHistory(JSON.parse(h));
+      api.getParseHistory()
+        .then(h => setHistory(h || []))
+        .catch(e => {
+          console.error('从数据库拉取解析历史失败:', e);
+          const h = localStorage.getItem('parse_history');
+          if (h) setHistory(JSON.parse(h));
+        });
       api.getSubscriptions().then(subs => setExistingUrls(new Set(subs.map(s => s.url)))).catch(() => {});
     }
   }, [isOpen]);
@@ -38,7 +43,6 @@ export function WebDiscoveryModal({ isOpen, onClose, onAdded }: WebDiscoveryModa
       setSelectedUrls(new Set());
       const nextHistory = [url, ...history.filter(h => h !== url)].slice(0, 10);
       setHistory(nextHistory);
-      localStorage.setItem('parse_history', JSON.stringify(nextHistory));
     } catch (e) {
       alert('解析失败: ' + String(e));
     } finally {
@@ -138,7 +142,27 @@ export function WebDiscoveryModal({ isOpen, onClose, onAdded }: WebDiscoveryModa
           </div>
           {history.length > 0 && (
             <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-[10px] text-secondary">历史记录:</span>
+              <span className="text-[10px] text-secondary flex items-center gap-1.5">
+                历史记录
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (confirm('确认清空所有网页解析历史记录吗？')) {
+                      try {
+                        await api.deleteParseHistory();
+                        setHistory([]);
+                        localStorage.removeItem('parse_history');
+                      } catch (err) {
+                        alert('清空失败: ' + String(err));
+                      }
+                    }
+                  }}
+                  className="text-red-500 hover:text-red-600 transition-colors hover:underline text-[9px] font-bold"
+                >
+                  (清空)
+                </button>
+                :
+              </span>
               {history.map((h, i) => (
                 <button 
                   key={i} 

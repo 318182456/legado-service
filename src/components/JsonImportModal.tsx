@@ -7,7 +7,7 @@ interface JsonImportModalProps {
   onSuccess: () => void;
 }
 
-type LegadoType = 'source' | 'rule' | 'txtTocRule' | 'dictRule';
+type LegadoType = 'source' | 'rule' | 'txtTocRule' | 'dictRule' | 'subscription';
 
 export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalProps) {
   const [jsonText, setJsonText] = useState('');
@@ -44,8 +44,10 @@ export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalP
       const first = data[0];
       let type: LegadoType = 'source';
 
-      if (first.bookSourceUrl || first.sourceUrl || first.bookSourceGroup || first.searchUrl) {
+      if (first.bookSourceUrl || first.bookSourceGroup || first.searchUrl) {
         type = 'source';
+      } else if (first.sourceUrl && first.sourceName) {
+        type = 'subscription';
       } else if (first.urlRule || first.showRule || first.sortNumber !== undefined) {
         type = 'dictRule';
       } else if (first.rule !== undefined || first.serialNumber !== undefined || first.serial_number !== undefined) {
@@ -96,6 +98,8 @@ export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalP
         res = await api.importTxtTocRules(parsedData);
       } else if (selectedType === 'dictRule') {
         res = await api.importDictRules(parsedData);
+      } else if (selectedType === 'subscription') {
+        res = await api.importSubscriptions(parsedData);
       }
 
       const importedCount = res?.imported ?? parsedData.length;
@@ -116,6 +120,7 @@ export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalP
     rule: '✨ 净化规则 (ReplaceRule)',
     txtTocRule: '📖 目录规则 (TxtTocRule)',
     dictRule: '🔍 字典规则 (DictRule)',
+    subscription: '🛎️ 订阅源 (Subscription)',
   };
 
   return (
@@ -186,7 +191,7 @@ export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalP
 
               <div className="flex flex-col gap-2 pt-2 border-t border-outline-variant/30">
                 <label className="text-[10px] font-bold text-secondary">选择规则分类导入到：</label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   {(Object.keys(typeLabels) as LegadoType[]).map((type) => (
                     <button
                       key={type}
@@ -198,7 +203,7 @@ export default function JsonImportModal({ onClose, onSuccess }: JsonImportModalP
                           : 'bg-surface-container-low border-outline-variant hover:bg-surface-container transition-colors'
                       }`}
                     >
-                      {type === 'source' ? '📦 书源' : type === 'rule' ? '✨ 净化' : type === 'txtTocRule' ? '📖 目录' : '🔍 字典'}
+                      {type === 'source' ? '📦 书源' : type === 'rule' ? '✨ 净化' : type === 'txtTocRule' ? '📖 目录' : type === 'dictRule' ? '🔍 字典' : '🛎️ 订阅'}
                     </button>
                   ))}
                 </div>
