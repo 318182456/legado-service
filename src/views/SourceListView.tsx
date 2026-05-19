@@ -168,6 +168,7 @@ export default function SourceListView({
               <option value="all">全部书源</option>
               <option value="available">仅看正常</option>
               <option value="unavailable">仅看不可用</option>
+              <option value="need_login">需要登录</option>
             </select>
 
             <label className="flex items-center gap-1.5 text-xs font-bold bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 select-none cursor-pointer hover:bg-surface-container-low transition-colors shrink-0">

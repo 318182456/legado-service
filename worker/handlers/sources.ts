@@ -26,6 +26,8 @@ export async function handleListSources(env: Env, url: URL): Promise<Response> {
     where += " AND is_available = 1";
   } else if (filter === "unavailable") {
     where += " AND is_available = 0";
+  } else if (filter === "need_login") {
+    where += " AND (json_extract(raw_json, '$.loginUrl') IS NOT NULL AND json_extract(raw_json, '$.loginUrl') != '')";
   }
 
   if (excludeDuplicate) {
