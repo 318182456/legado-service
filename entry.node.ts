@@ -10,6 +10,21 @@ import worker from './worker/index';
 
 const app = new Hono();
 
+// ─── 加载 .env 本地环境变量 ──────────────────────────────────────────
+const envPath = path.resolve(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  for (const line of envContent.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const index = trimmed.indexOf('=');
+    if (index === -1) continue;
+    const key = trimmed.substring(0, index).trim();
+    const value = trimmed.substring(index + 1).trim().replace(/^['"]|['"]$/g, '');
+    process.env[key] = value;
+  }
+}
+
 // ─── 配置与环境变量 ───────────────────────────────────────────────
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/legado';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -18,9 +33,74 @@ const PORT = Number(process.env.PORT) || 3000;
 const API_SECRET = process.env.API_SECRET || '';
 const READER_URL = process.env.READER_URL || 'http://localhost:8080';
 
+// ─── 内存 Mock 适配器 (免数据库运行模式) ─────────────────────────────
+class MemoryPreparedStatement {
+  constructor(private results: any[] = []) {}
+  bind(...params: any[]) { return this; }
+  async all() { return { results: this.results, success: true, meta: { duration: 0 } }; }
+  async first(col?: string) { 
+    const r = this.results[0]; 
+    if (!r) return null;
+    return col ? r[col] : r; 
+  }
+  async run() { return { success: true, meta: { changes: this.results.length, duration: 0, last_row_id: 1 } }; }
+  async raw() { return this.results.map(r => Object.values(r)); }
+}
+
+class MemoryD1 {
+  private tables: Record<string, any[]> = {
+    passkeys: [],
+    subscriptions: [],
+    sources: [],
+    rules: [],
+    txt_toc_rules: [],
+    dict_rules: [],
+    system_config: []
+  };
+
+  prepare(query: string) {
+    const sql = query.trim().toUpperCase();
+    let results: any[] = [];
+    if (sql.includes('PASSKEYS')) results = this.tables.passkeys;
+    else if (sql.includes('SUBSCRIPTIONS')) results = this.tables.subscriptions;
+    else if (sql.includes('SOURCES')) results = this.tables.sources;
+    else if (sql.includes('RULES')) results = this.tables.rules;
+    else if (sql.includes('TXT_TOC_RULES')) results = this.tables.txt_toc_rules;
+    else if (sql.includes('DICT_RULES')) results = this.tables.dict_rules;
+    else if (sql.includes('SYSTEM_CONFIG')) results = this.tables.system_config;
+
+    return new MemoryPreparedStatement(results);
+  }
+
+  async batch(statements: any[]) {
+    const res = [];
+    for (const stmt of statements) {
+      res.push(await stmt.run());
+    }
+    return res;
+  }
+
+  async exec(query: string) {
+    return { count: 0, duration: 0 };
+  }
+}
+
+class MemoryKV {
+  private store: Record<string, string> = {};
+  async get(key: string) { return this.store[key] || null; }
+  async put(key: string, value: string) { this.store[key] = value; }
+  async delete(key: string) { delete this.store[key]; }
+}
+
 // ─── 初始化适配器 ─────────────────────────────────────────────────
-const db = new PostgresD1(DATABASE_URL);
-const kv = new RedisKV(REDIS_URL, 'legado');
+const useMock = process.env.USE_MEMORY_MOCK === 'true';
+
+if (useMock) {
+  console.log('⚡ WARNING: Enrolled in memory mock database mode (USE_MEMORY_MOCK=true). No DB required!');
+}
+
+const db = useMock ? new MemoryD1() as any : new PostgresD1(DATABASE_URL);
+const kv = useMock ? new MemoryKV() as any : new RedisKV(REDIS_URL, 'legado');
 const r2 = new FileSystemR2(ASSETS_PATH);
 
 const env = {

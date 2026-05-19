@@ -100,14 +100,20 @@ export async function handleListRssSources(env: Env): Promise<Response> {
     }
     const text = await object.text();
     const data = JSON.parse(text);
-    const list = data.map((item: any, index: number) => ({
-      index,
-      sourceName: item.sourceName || "未命名订阅源",
-      sourceGroup: item.sourceGroup || "无分组",
-      sourceIcon: item.sourceIcon || "",
-      sourceUrl: item.sourceUrl || "",
-      enabled: item.enabled !== false
-    }));
+    const list = data.map((item: any, index: number) => {
+      const rawUrl = (item.sourceUrl || "").trim();
+      const firstLineUrl = rawUrl.split('\n')[0].trim();
+      const cleanUrl = (firstLineUrl.startsWith('http://') || firstLineUrl.startsWith('https://')) ? firstLineUrl : "";
+      
+      return {
+        index,
+        sourceName: item.sourceName || "未命名订阅源",
+        sourceGroup: item.sourceGroup || "无分组",
+        sourceIcon: item.sourceIcon || "",
+        sourceUrl: cleanUrl,
+        enabled: item.enabled !== false
+      };
+    });
     return new Response(JSON.stringify({ ok: true, data: list }), {
       headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
     });
