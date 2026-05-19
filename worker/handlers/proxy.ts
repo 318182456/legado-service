@@ -4,6 +4,9 @@ function rewritePath(pathname: string): string {
     pathname === '/reader3' || 
     pathname === '/reader3/' ||
     pathname === '/reader3/index.html' ||
+    pathname === '/reader3/manifest.json' ||
+    pathname === '/reader3/sw.js' ||
+    pathname === '/reader3/robots.txt' ||
     pathname.startsWith('/reader3/static/') ||
     pathname.startsWith('/reader3/js/') ||
     pathname.startsWith('/reader3/css/') ||
