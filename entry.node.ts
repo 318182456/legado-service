@@ -36,8 +36,13 @@ const env = {
 // 静态文件服务
 app.use('/*', serveStatic({ root: './dist' }));
 
-// API 与 订阅路由
-app.all('*', async (c) => {
+// API 与 订阅路由 (包含 WebDAV 方法支持)
+const WEBDAV_METHODS = [
+  'GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD',
+  'PROPFIND', 'PROPPATCH', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK'
+];
+
+app.on(WEBDAV_METHODS, '*', async (c) => {
   const req = c.req.raw;
   
   // 模拟 Worker 环境中的 ctx
