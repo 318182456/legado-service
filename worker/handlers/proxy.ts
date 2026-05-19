@@ -70,7 +70,7 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
 
   try {
     const res = await fetch(targetUrl, reqInit);
-    let body = await res.arrayBuffer();
+    let body: ArrayBuffer | Uint8Array = await res.arrayBuffer();
 
     // ─── 动态注入 sw.js 异常捕获，防止 Uncaught (in promise) Failed to fetch ───
     if (url.pathname === '/reader3/sw.js' && res.status === 200) {
@@ -158,7 +158,7 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
         }
 
         const textEncoder = new TextEncoder();
-        body = textEncoder.encode(swText).buffer;
+        body = textEncoder.encode(swText);
         console.log("[Proxy] 已成功对 /reader3/sw.js 进行动态 Promise.catch 异常捕获注入！");
       } catch (rewriteError) {
         console.error("[Proxy] 动态改写 sw.js 失败:", rewriteError);
@@ -176,6 +176,11 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
     responseHeaders.set('Access-Control-Allow-Credentials', 'true');
     responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK');
     responseHeaders.set('Access-Control-Allow-Headers', '*');
+
+    // ─── 修正 Content-Length 头部防止 sw.js 被截断 ───
+    if (url.pathname === '/reader3/sw.js' && res.status === 200) {
+      responseHeaders.set('Content-Length', body.byteLength.toString());
+    }
 
     const hasNullBody = [101, 204, 205, 304].includes(res.status);
     return new Response(hasNullBody ? null : body, {
