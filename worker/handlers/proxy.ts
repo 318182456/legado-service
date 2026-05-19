@@ -70,7 +70,7 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
 
   try {
     const res = await fetch(targetUrl, reqInit);
-    let body: ArrayBuffer | Uint8Array = await res.arrayBuffer();
+    let body: any = await res.arrayBuffer();
 
     // ─── 动态注入 sw.js 异常捕获，防止 Uncaught (in promise) Failed to fetch ───
     if (url.pathname === '/reader3/sw.js' && res.status === 200) {
