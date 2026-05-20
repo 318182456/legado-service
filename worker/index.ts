@@ -82,12 +82,6 @@ export default {
       if (path === "/subscribe/index" && method === "GET") return subscribe.handleSubscribeIndex(request, env);
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
 
-      if (path === "/api/rss-sources" && method === "GET") return subscribe.handleListRssSources(env);
-      if (path === "/api/rss-sources/toggle" && method === "POST") return subscribe.handleToggleRssSource(request, env);
-      const rssExportMatch = path.match(/^\/api\/rss-sources\/(\d+)\/export$/);
-      if (rssExportMatch && method === "GET") return subscribe.handleExportRssSource(env, rssExportMatch[1]);
-
-
       // ── /api/auth (公开) ──────────────────────────────────────────
       if (path === "/api/auth/login" && method === "POST") return auth.handleLogin(request, env);
       if (path === "/api/auth/passkey/status" && method === "GET") return auth.handlePasskeyStatus(env);
@@ -101,7 +95,6 @@ export default {
           path === "/api/resources" || 
           path === "/api/stats" ||
           path === "/api/zip/list" ||
-          path === "/api/rss-sources" ||
           path.endsWith("/export")
         );
         if (!isPublicGet && !auth.isAuthed(request, env)) return err("Unauthorized", 401);

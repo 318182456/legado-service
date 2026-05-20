@@ -57,8 +57,7 @@ export async function handleSubscribeIndex(request: Request, env: Env): Promise<
     .replace(/{{RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/rules'))
     .replace(/{{TXT_TOC_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/txtTocRules'))
     .replace(/{{DICT_RULES_URL}}/g, encodeURIComponent(origin + '/subscribe/dictRules'))
-    .replace(/{{INFO_URL}}/g, encodeURIComponent(origin + '/subscribe/info.json'))
-    .replace(/{{RSS_ALL_URL}}/g, encodeURIComponent(origin + '/repo/mochen_sources.json'));
+    .replace(/{{INFO_URL}}/g, encodeURIComponent(origin + '/subscribe/info.json'));
 
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8", "Access-Control-Allow-Origin": "*" },
@@ -88,118 +87,6 @@ export function handleSubscribeInfo(request: Request): Response {
     "type": 0
   }];
   return new Response(JSON.stringify(source), { headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" } });
-}
-
-export async function handleListRssSources(env: Env): Promise<Response> {
-  try {
-    const object = await env.ASSETS_R2.get("mochen_sources.json");
-    if (!object) {
-      return new Response(JSON.stringify({ ok: true, data: [] }), {
-        headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
-      });
-    }
-    const text = await object.text();
-    const data = JSON.parse(text);
-    const list = data.map((item: any, index: number) => {
-      const rawUrl = (item.sourceUrl || "").trim();
-      const firstLineUrl = rawUrl.split('\n')[0].trim();
-      
-      let status: 'none' | 'valid' | 'invalid' = 'none';
-      if (item.enabled === true) status = 'valid';
-      else if (item.enabled === false) status = 'invalid';
-
-      return {
-        index,
-        sourceName: item.sourceName || "未命名订阅源",
-        sourceGroup: item.sourceGroup || "无分组",
-        sourceIcon: item.sourceIcon || "",
-        sourceUrl: firstLineUrl,
-        status: status
-      };
-    });
-    return new Response(JSON.stringify({ ok: true, data: list }), {
-      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
-    });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
-    });
-  }
-}
-
-export async function handleExportRssSource(env: Env, indexStr: string): Promise<Response> {
-  try {
-    const index = parseInt(indexStr, 10);
-    const object = await env.ASSETS_R2.get("mochen_sources.json");
-    if (!object) {
-      return new Response(JSON.stringify({ error: "mochen_sources.json not found" }), { status: 404 });
-    }
-    const text = await object.text();
-    const data = JSON.parse(text);
-    if (isNaN(index) || index < 0 || index >= data.length) {
-      return new Response(JSON.stringify({ error: "Index out of bounds" }), { status: 400 });
-    }
-    const singleSource = data[index];
-    return new Response(JSON.stringify([singleSource]), {
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Access-Control-Allow-Origin": "*"
-      }
-    });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500 });
-  }
-}
-
-export async function handleToggleRssSource(request: Request, env: Env): Promise<Response> {
-  try {
-    const body = await request.json() as any;
-    const { index, status } = body;
-    if (typeof index !== "number" || !status) {
-      return new Response(JSON.stringify({ ok: false, error: "index and status are required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json; charset=utf-8" }
-      });
-    }
-
-    const object = await env.ASSETS_R2.get("mochen_sources.json");
-    if (!object) {
-      return new Response(JSON.stringify({ ok: false, error: "mochen_sources.json not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json; charset=utf-8" }
-      });
-    }
-
-    const text = await object.text();
-    const data = JSON.parse(text);
-    if (index < 0 || index >= data.length) {
-      return new Response(JSON.stringify({ ok: false, error: "Index out of bounds" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json; charset=utf-8" }
-      });
-    }
-
-    if (status === 'valid') {
-      data[index].enabled = true;
-    } else if (status === 'invalid') {
-      data[index].enabled = false;
-    } else {
-      delete data[index].enabled; // 删除键以恢复未标记默认状态
-    }
-
-    // Save changes back to R2/local assets directory
-    await env.ASSETS_R2.put("mochen_sources.json", JSON.stringify(data, null, 2));
-
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
-    });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ ok: false, error: String(e.message || e) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json; charset=utf-8" }
-    });
-  }
 }
 
 

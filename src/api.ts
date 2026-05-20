@@ -32,15 +32,6 @@ export interface Stats {
   rules: { enabled: number };
 }
 
-export interface RssSource {
-  index: number;
-  sourceName: string;
-  sourceGroup: string;
-  sourceIcon: string;
-  sourceUrl: string;
-  status: 'none' | 'valid' | 'invalid';
-}
-
 // ---------- Token 持久化 ----------
 
 const TOKEN_KEY = "legado_token";
@@ -248,12 +239,5 @@ export const saveSystemConfig = (config: Record<string, string>) =>
     body: JSON.stringify(config)
   });
 
-export const getRssSources = () => apiFetch<RssSource[]>("/api/rss-sources");
-
-export const toggleRssSource = (index: number, status: 'none' | 'valid' | 'invalid') =>
-  apiFetch<any>("/api/rss-sources/toggle", {
-    method: "POST",
-    body: JSON.stringify({ index, status })
-  });
 
 
