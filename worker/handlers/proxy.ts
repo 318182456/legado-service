@@ -1,4 +1,9 @@
 function rewritePath(pathname: string): string {
+  // 防止重复添加 /reader3 前缀（支持前端配置的 /reader3/reader3 双写路径）
+  if (pathname === '/reader3/reader3' || pathname.startsWith('/reader3/reader3/')) {
+    return pathname;
+  }
+
   // 静态资源保持原样（它们本来就包含 /reader3 且在 contextPath 下也是位于 /reader3 根目录）
   const isStaticAsset = 
     pathname === '/reader3' || 
