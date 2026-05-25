@@ -12,6 +12,23 @@ export async function checkBookSourceRealAvailability(
   try {
     const src = JSON.parse(rawJsonStr);
     const searchUrl = src.searchUrl;
+
+    // 检测是否为动态 JS 书源 (包含 <js>, @js:, 或 {{ 模板语法，在 Node.js 中无法直接运行)
+    const hasJsInSearch = typeof searchUrl === "string" && (
+      searchUrl.includes("<js>") || 
+      searchUrl.includes("@js:") || 
+      searchUrl.includes("{{")
+    );
+    const hasJsInSourceUrl = typeof bookSourceUrl === "string" && (
+      bookSourceUrl.includes("<js>") || 
+      bookSourceUrl.includes("@js:") || 
+      bookSourceUrl.includes("{{")
+    );
+
+    if (hasJsInSearch || hasJsInSourceUrl) {
+      console.log(`[checkBookSourceRealAvailability] 动态 JS/模板书源，跳过网络测试直接判定为可用: ${bookSourceUrl}`);
+      return true;
+    }
     
     // 如果没有配置搜索 URL，降级为测试源域名本身
     if (typeof searchUrl !== "string" || !searchUrl.trim()) {
