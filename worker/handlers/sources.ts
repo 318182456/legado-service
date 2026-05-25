@@ -5,6 +5,7 @@ import {
   parseBody,
   rebuildCache,
   hashText,
+  checkBookSourceRealAvailability,
 } from "../utils";
 import { runWorkerPool } from "./worker-runner";
 
@@ -79,7 +80,7 @@ export async function handleTestSources(env: Env, request: Request, ctx: any): P
   console.log(`[TestSources] 开始测试选中的书源，共 ${ids.length} 个...`);
 
   const { results: rawSources } = await env.DB.prepare(
-    `SELECT id, COALESCE(test_url, book_source_url) as test_url FROM sources WHERE id IN (${ids.map(() => '?').join(',')})`
+    `SELECT id, book_source_url, raw_json FROM sources WHERE id IN (${ids.map(() => '?').join(',')})`
   ).bind(...ids).all();
 
   const sourcesMap = new Map(rawSources.map((s: any) => [s.id, s]));
@@ -96,30 +97,19 @@ export async function handleTestSources(env: Env, request: Request, ctx: any): P
 
     const promise = (async () => {
       const sourceData = sourcesMap.get(id);
-      if (!sourceData || !sourceData.test_url) {
-        console.log(`[TestSources] 书源 ID ${id} 无有效测试 URL，跳过。`);
+      if (!sourceData || !sourceData.raw_json) {
+        console.log(`[TestSources] 书源 ID ${id} 无有效配置，跳过。`);
         testResults[id] = false; 
         return; 
       }
 
-      const urlToTest = sourceData.test_url;
       const startTime = Date.now();
 
-      const fetchOptions: RequestInit = {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        },
-        signal: AbortSignal.timeout(5000) 
-      };
-
       try {
-        const res = await fetch(urlToTest, fetchOptions);
-        await res.body?.cancel();
+        const success = await checkBookSourceRealAvailability(sourceData.raw_json, sourceData.book_source_url);
         const duration = Date.now() - startTime;
-        const success = (res.status >= 200 && res.status < 400);
         testResults[id] = success;
-        console.log(`[TestSources] 书源 ID ${id} 测试结果: ${success ? 'SUCCESS' : 'FAILED'} (状态: ${res.status}, 耗时: ${duration}ms)`);
+        console.log(`[TestSources] 书源 ID ${id} 测试结果: ${success ? 'SUCCESS' : 'FAILED'} (耗时: ${duration}ms)`);
       } catch (err: any) {
         const duration = Date.now() - startTime;
         testResults[id] = false;
@@ -165,9 +155,9 @@ export async function handleTestSources(env: Env, request: Request, ctx: any): P
 }
 
 export async function handleTestAllSources(env: Env, ctx: any): Promise<Response> {
-  // 单次轻量级全量查询，获取全库所有书源 id 和测试 url（不限于启用的）
+  // 获取全库所有书源 id、book_source_url 和 raw_json（不限于启用的）
   const { results: rawSources } = await env.DB.prepare(
-    "SELECT id, COALESCE(test_url, book_source_url) as test_url FROM sources"
+    "SELECT id, book_source_url, raw_json FROM sources"
   ).all();
   
   if (!rawSources.length) {
@@ -178,10 +168,11 @@ export async function handleTestAllSources(env: Env, ctx: any): Promise<Response
   const ids = rawSources.map((r: any) => r.id);
   const itemsToTest = rawSources.map((r: any) => ({
     id: r.id,
-    urlToTest: r.test_url
-  })).filter(x => x.urlToTest);
+    book_source_url: r.book_source_url,
+    raw_json: r.raw_json
+  }));
 
-  console.log(`[TestAllSources] 触发后台全库测试，共发现 ${ids.length} 个书源 (有效测试链接 ${itemsToTest.length} 个)...`);
+  console.log(`[TestAllSources] 触发后台全库测试，共发现 ${ids.length} 个书源...`);
 
   const progressKey = "test_progress";
   const initialProgress = { current: 0, total: itemsToTest.length, running: true };

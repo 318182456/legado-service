@@ -1,5 +1,6 @@
 import { fileURLToPath } from "url";
 import os from "os";
+import { checkBookSourceRealAvailability } from "../utils";
 
 let WorkerClass: any = null;
 let isMain = true;
@@ -33,24 +34,13 @@ if (!isMain && pPort && wData) {
 
         const promise = (async () => {
           const startTime = Date.now();
-          const fetchOptions: RequestInit = {
-            method: "GET",
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            },
-            signal: AbortSignal.timeout(5000)
-          };
-
           try {
-            const res = await fetch(source.urlToTest, fetchOptions);
-            await res.body?.cancel();
+            const success = await checkBookSourceRealAvailability(source.raw_json, source.book_source_url);
             const duration = Date.now() - startTime;
-            const success = res.status >= 200 && res.status < 400;
             pPort!.postMessage({
               type: "result",
               id: source.id,
               available: success,
-              status: res.status,
               duration
             });
           } catch (err: any) {
@@ -180,14 +170,11 @@ export async function runWorkerPool<T, R>(options: {
         if (options.taskType === "test-sources") {
           const startTime = Date.now();
           try {
-            const res = await fetch(anyItem.urlToTest, { signal: AbortSignal.timeout(5000) });
-            await res.body?.cancel();
-            const success = res.status >= 200 && res.status < 400;
+            const success = await checkBookSourceRealAvailability(anyItem.raw_json, anyItem.book_source_url);
             await options.onResult({
               type: "result",
               id: anyItem.id,
               available: success,
-              status: res.status,
               duration: Date.now() - startTime
             });
           } catch (err: any) {
