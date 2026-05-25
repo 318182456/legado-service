@@ -1,6 +1,6 @@
 import { fileURLToPath } from "url";
 import os from "os";
-import { checkBookSourceRealAvailability } from "../utils";
+import { checkBookSourceRealAvailability } from "../utils.ts";
 
 let WorkerClass: any = null;
 let isMain = true;
