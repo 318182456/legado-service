@@ -103,13 +103,22 @@ export async function checkBookSourceRealAvailability(
 
     urlStr = replacePlaceholders(urlStr);
 
-    // 确保是绝对路径
-    if (!urlStr.startsWith("http")) {
+    // 确保是绝对路径且为合法的 HTTP/HTTPS 协议
+    if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://")) {
       try {
         urlStr = new URL(urlStr, bookSourceUrl).toString();
       } catch (_) {
-        urlStr = bookSourceUrl.replace(/\/$/, "") + "/" + urlStr.replace(/^\//, "");
+        try {
+          urlStr = new URL(urlStr, new URL(bookSourceUrl)).toString();
+        } catch (_) {
+          urlStr = bookSourceUrl.replace(/\/$/, "") + "/" + urlStr.replace(/^\//, "");
+        }
       }
+    }
+
+    if (!urlStr.startsWith("http://") && !urlStr.startsWith("https://")) {
+      console.log(`[checkBookSourceRealAvailability] 忽略非合法 HTTP/HTTPS 书源链接: ${urlStr}`);
+      return false;
     }
 
     // 替换请求头中的占位符
@@ -257,8 +266,9 @@ export async function checkBookSourceRealAvailability(
       }
       return true;
     }
-  } catch (err) {
-    console.error(`[checkBookSourceRealAvailability] 错误: ${bookSourceUrl}`, err);
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    console.log(`[checkBookSourceRealAvailability] 书源失效 (${bookSourceUrl}): ${errMsg}`);
     return false;
   }
 }
