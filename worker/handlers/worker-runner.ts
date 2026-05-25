@@ -13,17 +13,25 @@ export async function checkBookSourceRealAvailability(
     const src = JSON.parse(rawJsonStr);
     const searchUrl = src.searchUrl;
 
-    // 检测是否为动态 JS 书源 (包含 <js>, @js:, 或 {{ 模板语法，在 Node.js 中无法直接运行)
-    const hasJsInSearch = typeof searchUrl === "string" && (
-      searchUrl.includes("<js>") || 
-      searchUrl.includes("@js:") || 
-      searchUrl.includes("{{")
-    );
-    const hasJsInSourceUrl = typeof bookSourceUrl === "string" && (
-      bookSourceUrl.includes("<js>") || 
-      bookSourceUrl.includes("@js:") || 
-      bookSourceUrl.includes("{{")
-    );
+    // 检测是否为动态 JS 书源 (在 Node.js 中无法直接运行的 <js>、@js: 或是非 {{key}}/{{searchKey}}/{{page}}/{{index}} 的动态 JS 模板语法)
+    const checkIsDynamicJs = (str: string | undefined): boolean => {
+      if (typeof str !== "string") return false;
+      if (str.includes("<js>") || str.includes("@js:")) return true;
+      
+      const matches = str.match(/\{\{([\s\S]*?)\}\}/g);
+      if (matches) {
+        for (const m of matches) {
+          const content = m.slice(2, -2).trim();
+          if (content !== "key" && content !== "searchKey" && content !== "page" && content !== "index") {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    const hasJsInSearch = checkIsDynamicJs(searchUrl);
+    const hasJsInSourceUrl = checkIsDynamicJs(bookSourceUrl);
 
     if (hasJsInSearch || hasJsInSourceUrl) {
       console.log(`[checkBookSourceRealAvailability] 动态 JS/模板书源，跳过网络测试直接判定为可用: ${bookSourceUrl}`);
