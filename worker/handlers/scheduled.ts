@@ -6,8 +6,9 @@ import {
   syncTxtTocRuleSubscription,
   syncDictRuleSubscription,
   rebuildCache,
-  checkBookSourceRealAvailability,
 } from "../utils";
+import { runWorkerPool } from "./worker-runner";
+import type { CheckVerdict } from "./worker-runner";
 
 export async function handleScheduled(env: Env) {
   try {
@@ -35,19 +36,38 @@ export async function handleScheduled(env: Env) {
     
     console.log(`Checking availability for ${sources.length} sources...`);
 
-    const checkResults: Record<number, boolean> = {};
-    await Promise.all((sources as any[]).map(async (src) => {
-      checkResults[src.id] = await checkBookSourceRealAvailability(src.raw_json, src.book_source_url);
-    }));
-
     if (sources.length > 0) {
+      const verdicts: Record<number, CheckVerdict> = {};
+      await runWorkerPool({
+        taskType: "test-sources",
+        items: (sources as any[]).map(s => ({
+          id: s.id,
+          book_source_url: s.book_source_url,
+          raw_json: s.raw_json
+        })),
+        concurrencyPerThread: 10,
+        onResult: (msg) => {
+          verdicts[msg.id] = msg.verdict || "unavailable";
+        }
+      });
+
+      // 无法判定的源保留上次的 is_available，只推进 last_checked，
+      // 否则下一轮 ORDER BY last_checked 会一直重复挑中它们
       const stmts = (sources as any[]).map(src => {
-        const avail = checkResults[src.id] ? 1 : 0;
+        const verdict = verdicts[src.id];
+        if (verdict === "skipped") {
+          return env.DB.prepare(
+            "UPDATE sources SET last_checked = datetime('now') WHERE id = ?"
+          ).bind(src.id);
+        }
         return env.DB.prepare(
           "UPDATE sources SET is_available = ?, last_checked = datetime('now') WHERE id = ?"
-        ).bind(avail, src.id);
+        ).bind(verdict === "available" ? 1 : 0, src.id);
       });
       await env.DB.batch(stmts);
+
+      const counts = countVerdicts(sources as any[], verdicts);
+      console.log(`Availability check done: available=${counts.available}, unavailable=${counts.unavailable}, skipped=${counts.skipped}`);
     }
 
     // 3. 重建全局 KV 缓存
@@ -62,4 +82,13 @@ export async function handleScheduled(env: Env) {
   } catch (e) {
     console.error("Scheduled handler error:", e);
   }
+}
+
+function countVerdicts(sources: any[], verdicts: Record<number, CheckVerdict>) {
+  const counts = { available: 0, unavailable: 0, skipped: 0 };
+  for (const src of sources) {
+    const verdict = verdicts[src.id] || "unavailable";
+    counts[verdict]++;
+  }
+  return counts;
 }

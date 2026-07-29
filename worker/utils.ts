@@ -480,7 +480,8 @@ export async function rebuildCache(env: Env, type: "source" | "rule" | "txtTocRu
 }
 
 
-export { checkBookSourceRealAvailability } from "./handlers/worker-runner";
+export { checkBookSource, checkBookSourceRealAvailability } from "./handlers/worker-runner";
+export type { CheckOutcome, CheckVerdict } from "./handlers/worker-runner";
 
 
 

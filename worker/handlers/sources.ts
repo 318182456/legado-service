@@ -5,9 +5,9 @@ import {
   parseBody,
   rebuildCache,
   hashText,
-  checkBookSourceRealAvailability,
 } from "../utils";
 import { runWorkerPool } from "./worker-runner";
+import type { CheckVerdict } from "./worker-runner";
 
 let activeWorkers: any[] = [];
 
@@ -84,65 +84,87 @@ export async function handleTestSources(env: Env, request: Request, ctx: any): P
   ).bind(...ids).all();
 
   const sourcesMap = new Map(rawSources.map((s: any) => [s.id, s]));
-  const testResults: Record<number, boolean> = {};
+  const verdicts: Record<number, CheckVerdict> = {};
+  const reasons: Record<number, string> = {};
 
-  // 滑动窗口并发控制：最大并发 50
-  const CONCURRENCY = 50;
-  const pool: Promise<void>[] = [];
-
+  // 库里查不到或没有配置内容的 id 无需入队，直接判失效
+  const itemsToTest: any[] = [];
   for (const id of ids) {
-    if (pool.length >= CONCURRENCY) {
-      await Promise.race(pool);
+    const sourceData = sourcesMap.get(id) as any;
+    if (!sourceData || !sourceData.raw_json) {
+      console.log(`[TestSources] 书源 ID ${id} 无有效配置，判定为不可用。`);
+      verdicts[id] = "unavailable";
+      reasons[id] = "missing-config";
+      continue;
     }
-
-    const promise = (async () => {
-      const sourceData = sourcesMap.get(id);
-      if (!sourceData || !sourceData.raw_json) {
-        console.log(`[TestSources] 书源 ID ${id} 无有效配置，跳过。`);
-        testResults[id] = false; 
-        return; 
-      }
-
-      const startTime = Date.now();
-
-      try {
-        const success = await checkBookSourceRealAvailability(sourceData.raw_json, sourceData.book_source_url);
-        const duration = Date.now() - startTime;
-        testResults[id] = success;
-        console.log(`[TestSources] 书源 ID ${id} 测试结果: ${success ? 'SUCCESS' : 'FAILED'} (耗时: ${duration}ms)`);
-      } catch (err: any) {
-        const duration = Date.now() - startTime;
-        testResults[id] = false;
-        console.log(`[TestSources] 书源 ID ${id} 测试失败 (原因: ${err.message || err}, 耗时: ${duration}ms)`);
-      }
-    })();
-
-    pool.push(promise);
-    promise.finally(() => {
-      const idx = pool.indexOf(promise);
-      if (idx !== -1) pool.splice(idx, 1);
+    itemsToTest.push({
+      id,
+      book_source_url: sourceData.book_source_url,
+      raw_json: sourceData.raw_json
     });
   }
 
-  await Promise.all(pool);
+  await runWorkerPool({
+    taskType: "test-sources",
+    items: itemsToTest,
+    concurrencyPerThread: 15,
+    onResult: (msg) => {
+      verdicts[msg.id] = msg.verdict || "unavailable";
+      reasons[msg.id] = msg.reason || "";
+      const extra = msg.detail ? ` - ${msg.detail}` : "";
+      console.log(`[TestSources] 书源 ID ${msg.id}: ${verdicts[msg.id]} (${msg.reason}${extra}, 耗时 ${msg.duration}ms)`);
+    }
+  });
 
-  // 批量更新数据库：将 50 个更新简化为批量 SQL 语句，大幅节省 CPU（不修改 enabled 状态）
-  const availIds = ids.filter(id => testResults[id]);
-  const unavailIds = ids.filter(id => !testResults[id]);
+  const counts = await writeVerdicts(env, ids, verdicts);
 
-  const updateBatch = [];
+  console.log(`[TestSources] 测试完成：可用 ${counts.available}，不可用 ${counts.unavailable}，无法判定 ${counts.skipped}（保留原状态）。`);
+  return ok({ verdicts, reasons, summary: counts });
+}
+
+/**
+ * 按三态写回测试结果。
+ * 无法判定（动态 JS 规则、限流、编码不支持）的源保留原有 is_available，
+ * 只推进 last_checked —— 测不出来不等于失效，写 0 会误杀，写 1 会虚高。
+ */
+async function writeVerdicts(
+  env: Env,
+  ids: number[],
+  verdicts: Record<number, CheckVerdict>
+): Promise<{ available: number; unavailable: number; skipped: number }> {
+  const availIds: number[] = [];
+  const unavailIds: number[] = [];
+  const skippedIds: number[] = [];
+
+  for (const id of ids) {
+    const verdict = verdicts[id];
+    if (verdict === "available") availIds.push(id);
+    else if (verdict === "skipped") skippedIds.push(id);
+    else if (verdict === "unavailable") unavailIds.push(id);
+  }
+
+  const holders = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  const updateBatch: any[] = [];
+
   if (availIds.length > 0) {
     updateBatch.push(
       env.DB.prepare(
-        `UPDATE sources SET is_available = 1, last_checked = datetime('now') WHERE id IN (${availIds.map(() => "?").join(",")})`
+        `UPDATE sources SET is_available = 1, last_checked = datetime('now') WHERE id IN (${holders(availIds.length)})`
       ).bind(...availIds)
     );
   }
   if (unavailIds.length > 0) {
     updateBatch.push(
       env.DB.prepare(
-        `UPDATE sources SET is_available = 0, last_checked = datetime('now') WHERE id IN (${unavailIds.map(() => "?").join(",")})`
+        `UPDATE sources SET is_available = 0, last_checked = datetime('now') WHERE id IN (${holders(unavailIds.length)})`
       ).bind(...unavailIds)
+    );
+  }
+  if (skippedIds.length > 0) {
+    updateBatch.push(
+      env.DB.prepare(
+        `UPDATE sources SET last_checked = datetime('now') WHERE id IN (${holders(skippedIds.length)})`
+      ).bind(...skippedIds)
     );
   }
 
@@ -150,8 +172,11 @@ export async function handleTestSources(env: Env, request: Request, ctx: any): P
     await env.DB.batch(updateBatch);
   }
 
-  console.log(`[TestSources] 选中书源测试及数据库写入已完成。`);
-  return ok(testResults);
+  return {
+    available: availIds.length,
+    unavailable: unavailIds.length,
+    skipped: skippedIds.length
+  };
 }
 
 export async function handleTestAllSources(env: Env, ctx: any): Promise<Response> {
@@ -181,54 +206,36 @@ export async function handleTestAllSources(env: Env, ctx: any): Promise<Response
   const runAllTests = async () => {
     try {
       let finishedCount = 0;
-      const batchBuffer: { id: number; available: boolean }[] = [];
+      let aborted = false;
+      const batchBuffer: { id: number; verdict: CheckVerdict }[] = [];
+      const reasonTally: Record<string, number> = {};
       let dbWritePromise = Promise.resolve();
 
       // 辅助函数：批量更新数据库与进度，采用链式 Promise 避免并发写入冲突
       const flushBatch = async () => {
         if (batchBuffer.length === 0) return;
-        const toWrite = [...batchBuffer];
-        batchBuffer.length = 0;
+        const toWrite = batchBuffer.splice(0, batchBuffer.length);
 
         dbWritePromise = dbWritePromise.then(async () => {
-          const availIds = toWrite.filter(x => x.available).map(x => x.id);
-          const unavailIds = toWrite.filter(x => !x.available).map(x => x.id);
-
-          const updateBatch = [];
-          if (availIds.length > 0) {
-            updateBatch.push(
-              env.DB.prepare(
-                `UPDATE sources SET is_available = 1, last_checked = datetime('now') WHERE id IN (${availIds.map(() => "?").join(",")})`
-              ).bind(...availIds)
-            );
-          }
-          if (unavailIds.length > 0) {
-            updateBatch.push(
-              env.DB.prepare(
-                `UPDATE sources SET is_available = 0, last_checked = datetime('now') WHERE id IN (${unavailIds.map(() => "?").join(",")})`
-              ).bind(...unavailIds)
-            );
+          if (aborted) return;
+          // 每批写入前确认一次是否被中止，而不是每条结果都去读一次 KV
+          if (!(await isTestRunning(env, progressKey))) {
+            aborted = true;
+            return;
           }
 
-          if (updateBatch.length > 0) {
-            await env.DB.batch(updateBatch);
-          }
+          const verdicts: Record<number, CheckVerdict> = {};
+          for (const item of toWrite) verdicts[item.id] = item.verdict;
+          const counts = await writeVerdicts(env, toWrite.map(x => x.id), verdicts);
 
-          // 平滑更新进度与打印日志
           finishedCount += toWrite.length;
-          console.log(`[TestAllSources] 进度: ${finishedCount}/${itemsToTest.length}，本批写入: 可用 ${availIds.length} 个，不可用 ${unavailIds.length} 个`);
+          console.log(`[TestAllSources] 进度: ${finishedCount}/${itemsToTest.length}，本批可用 ${counts.available}，不可用 ${counts.unavailable}，无法判定 ${counts.skipped}`);
 
-          const currentProgressRaw = await env.KV.get(progressKey);
-          if (currentProgressRaw) {
-            const currentProgress = JSON.parse(currentProgressRaw);
-            if (currentProgress.running) {
-              await env.KV.put(progressKey, JSON.stringify({
-                current: Math.min(itemsToTest.length, finishedCount),
-                total: itemsToTest.length,
-                running: true
-              }));
-            }
-          }
+          await env.KV.put(progressKey, JSON.stringify({
+            current: Math.min(itemsToTest.length, finishedCount),
+            total: itemsToTest.length,
+            running: true
+          }));
         }).catch(console.error);
       };
 
@@ -238,27 +245,18 @@ export async function handleTestAllSources(env: Env, ctx: any): Promise<Response
         items: itemsToTest,
         threadCount: 4, // 使用 4 个工作线程
         concurrencyPerThread: 15, // 每个线程维持 15 个并发连接
-        onResult: async (msg) => {
-          // 检查是否已被手动中止
-          const currentProgressRaw = await env.KV.get(progressKey);
-          if (currentProgressRaw) {
-            const currentProgress = JSON.parse(currentProgressRaw);
-            if (!currentProgress.running) {
-              // 被中止了，直接略过
-              return;
-            }
-          }
-
-          batchBuffer.push({ id: msg.id, available: msg.available });
-          if (batchBuffer.length >= 50) {
-            await flushBatch();
-          }
+        onResult: (msg) => {
+          if (aborted) return;
+          batchBuffer.push({ id: msg.id, verdict: msg.verdict || "unavailable" });
+          if (msg.reason) reasonTally[msg.reason] = (reasonTally[msg.reason] || 0) + 1;
+          // onResult 由线程池串行调用，缓冲区不会被并发进入
+          if (batchBuffer.length >= 50) return flushBatch();
         },
         onActiveWorkers: (workers) => {
           activeWorkers = workers;
         },
         onWorkerDone: (t) => {
-          console.log(`[TestAllSources] 工作线程 ${t + 1} 已完成其分配的测试分片。`);
+          console.log(`[TestAllSources] 工作线程 ${t + 1} 已完成任务。`);
         }
       });
 
@@ -266,6 +264,12 @@ export async function handleTestAllSources(env: Env, ctx: any): Promise<Response
       await flushBatch();
       // 等待所有数据库写入工作最终闭合
       await dbWritePromise;
+
+      const tally = Object.entries(reasonTally)
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(", ");
+      console.log(`[TestAllSources] 判定原因分布: ${tally || "无"}`);
 
       // 测试完毕，更新状态为未运行，并自动重建缓存
       const finalProgressRaw = await env.KV.get(progressKey);
@@ -292,6 +296,17 @@ export async function handleTestAllSources(env: Env, ctx: any): Promise<Response
   }
 
   return ok({ message: "Test started in background using multi-threading" });
+}
+
+/** 全库测试是否仍在进行（未被 handleStopTestSources 中止） */
+async function isTestRunning(env: Env, progressKey: string): Promise<boolean> {
+  try {
+    const raw = await env.KV.get(progressKey);
+    if (!raw) return false;
+    return JSON.parse(raw).running === true;
+  } catch (_) {
+    return false;
+  }
 }
 
 export async function handleStopTestSources(env: Env): Promise<Response> {

@@ -151,7 +151,14 @@ export const addRule = (data: { name: string; pattern: string; replacement: stri
 export const getResources = () => apiFetch<any>("/api/resources");
 export const refreshResources = () => apiFetch<any>("/api/resources/refresh", { method: "POST" });
 
-export const testSources = (ids: number[]) => apiFetch<Record<number, boolean>>("/api/sources/test", { method: "POST", body: JSON.stringify({ ids }) });
+/** verdict 为 skipped 表示本地无法判定（动态 JS 规则等），该源的可用状态保持不变 */
+export type SourceCheckVerdict = "available" | "unavailable" | "skipped";
+export const testSources = (ids: number[]) =>
+  apiFetch<{
+    verdicts: Record<number, SourceCheckVerdict>;
+    reasons: Record<number, string>;
+    summary: { available: number; unavailable: number; skipped: number };
+  }>("/api/sources/test", { method: "POST", body: JSON.stringify({ ids }) });
 export const testAllSources = () => apiFetch<any>("/api/sources/test/all", { method: "POST" });
 export const stopTestSources = () => apiFetch<any>("/api/sources/test/stop", { method: "POST" });
 export const getTestProgress = () => 
