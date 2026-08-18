@@ -1,31 +1,42 @@
+// legado-reader（hectorqin/reader）的实际路径布局：
+//   · 前端静态资源由 StaticHandler 挂在后端根路径 /*（webRoot 为 jar 内的 web 目录）
+//   · 接口与 WebDAV 硬编码在 /reader3/* 下
+// 源码中并未读取 reader.server.contextPath，所以 READER_SERVER_CONTEXTPATH 环境变量不起作用，
+// 本服务对外暴露的 /reader3/ 需要先区分「静态资源 / 接口」再决定是否剥离前缀。
+const READER_PREFIX = '/reader3';
+
+// 接口路径均为 /reader3/<单段且不含扩展名>（WebDAV 是唯一的多段例外），
+// 静态资源则是首页、带扩展名的文件（index.html、sw.js、manifest.json 等）或多级目录下的资源。
+function isStaticAsset(rest: string): boolean {
+  const path = rest.startsWith('/') ? rest.slice(1) : rest;
+  if (path === '') return true;
+  if (path.startsWith('webdav')) return false;
+  return path.includes('/') || path.includes('.');
+}
+
 function rewritePath(pathname: string): string {
-  // 防止重复添加 /reader3 前缀（支持前端配置的 /reader3/reader3 双写路径）
-  if (pathname === '/reader3/reader3' || pathname.startsWith('/reader3/reader3/')) {
+  // 兼容前端把 api_prefix 配成 /reader3/reader3 的历史双写路径，剥掉多余的一层
+  if (pathname === READER_PREFIX + READER_PREFIX || pathname.startsWith(READER_PREFIX + READER_PREFIX + '/')) {
+    pathname = pathname.slice(READER_PREFIX.length);
+  }
+
+  if (pathname === READER_PREFIX || pathname.startsWith(READER_PREFIX + '/')) {
+    const rest = pathname.slice(READER_PREFIX.length);
+    // 静态资源位于后端根路径下，转发时剥离 /reader3 前缀
+    if (isStaticAsset(rest)) {
+      return rest === '' || rest === '/' ? '/' : rest;
+    }
+    // 接口与 WebDAV 本就在 /reader3/ 下，原样转发
     return pathname;
   }
 
-  // 静态资源保持原样（它们本来就包含 /reader3 且在 contextPath 下也是位于 /reader3 根目录）
-  const isStaticAsset = 
-    pathname === '/reader3' || 
-    pathname === '/reader3/' ||
-    pathname === '/reader3/index.html' ||
-    pathname === '/reader3/manifest.json' ||
-    pathname === '/reader3/sw.js' ||
-    pathname === '/reader3/robots.txt' ||
-    pathname.startsWith('/reader3/static/') ||
-    pathname.startsWith('/reader3/js/') ||
-    pathname.startsWith('/reader3/css/') ||
-    pathname.startsWith('/reader3/img/') ||
-    pathname.startsWith('/reader3/fonts/') ||
-    pathname.startsWith('/reader3/favicon.ico');
-
-  if (isStaticAsset) {
+  // 后端的 /epub/*、/assets/* 同样挂在根路径，原样转发
+  if (pathname.startsWith('/epub/') || pathname.startsWith('/assets/')) {
     return pathname;
   }
 
-  // 针对 WebDAV 或是其它 API，如果已经是 /reader3 开头的非静态资源，重写为 /reader3/reader3/...
-  // 如果是 /epub 或 /getBookshelf 等其它被代理的根级路由，重写为 /reader3/epub/... 或 /reader3/getBookshelf
-  return '/reader3' + pathname;
+  // 其余根级接口（/getBookshelf 等）补上 /reader3 前缀
+  return READER_PREFIX + pathname;
 }
 
 export async function proxyToReader(request: Request, readerUrl: string): Promise<Response> {

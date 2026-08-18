@@ -27,7 +27,7 @@ services:
 
     reader:
         container_name: legado-reader
-        image: hectorqin/reader:openj9-latest
+        image: 318182456/reader-basic:openj9-latest
         mem_limit: 512m
         ports:
             - 4396:8080
@@ -36,7 +36,8 @@ services:
             - READER_APP_SECURE=true
             - READER_APP_SECUREKEY=wal116266321
             - READER_APP_CACHECHAPTERCONTENT=true
-            - READER_SERVER_CONTEXTPATH=/reader3
+            ## reader 源码未读取 reader.server.contextPath，静态页在后端根路径、接口在 /reader3/*，
+            ## 对外的 /reader3 前缀由 legado-service 的 proxy 分流处理，此处无需设置 contextPath
             - JAVA_OPTS=-Xms128m -Xmx384m
         volumes:
             - ./storage:/storage

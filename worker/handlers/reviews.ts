@@ -20,6 +20,7 @@ import {
   DEFAULT_PERSONAS,
   type ReviewDraft,
 } from "../review-ai";
+import { fetchParagraphsViaReader, resolveReaderConfig } from "../reader-content";
 
 const DETAIL_PAGE_SIZE = 20;
 const REPLY_PAGE_SIZE = 20;
@@ -144,10 +145,83 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
 
   const bookKey = await bookKeyOf(bookName, author);
   const chapterKey = await chapterKeyOf(chapterTitle);
+  const list = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
 
-  return json({
-    list: await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey)),
-  });
+  // 规则书源带不了正文，改由服务端借 reader 去抓，然后自行生成。
+  // 这一步不阻塞响应：抓目录 + 抓正文 + 调模型远超 App 的请求超时，
+  // 先把现有结果返回，生成完下次进这一章（或翻页回来）就有了。
+  const bookUrl = (url.searchParams.get("bookUrl") ?? "").trim();
+  const originUrl = (url.searchParams.get("origin") ?? "").trim();
+  if (bookUrl && originUrl) {
+    void autoGenerateViaReader(env, {
+      bookKey,
+      chapterKey,
+      bookName,
+      author,
+      chapterTitle,
+      bookUrl,
+      originUrl,
+    });
+  }
+
+  return json({ list });
+}
+
+/**
+ * 借 reader 抓正文并生成本章段评。后台执行，异常只记日志。
+ * 章节状态锁保证同一章不会被并发重复处理。
+ */
+async function autoGenerateViaReader(
+  env: Env,
+  opts: {
+    bookKey: string;
+    chapterKey: string;
+    bookName: string;
+    author: string;
+    chapterTitle: string;
+    bookUrl: string;
+    originUrl: string;
+  }
+): Promise<void> {
+  try {
+    const cfg = await loadAiConfig(env);
+    if (!cfg.apiKey) return;
+
+    // 先看状态，避免为已处理过的章节白跑一趟 reader
+    const row = (await env.DB.prepare(
+      `SELECT status FROM review_chapters WHERE book_key = ? AND chapter_key = ?`
+    )
+      .bind(opts.bookKey, opts.chapterKey)
+      .first()) as any;
+    if (row?.status && row.status !== "pending") return;
+
+    const readerCfg = await resolveReaderConfig(env);
+    if (!readerCfg) return;
+
+    const fetched = await fetchParagraphsViaReader(env, {
+      readerUrl: readerCfg.readerUrl,
+      accessToken: readerCfg.accessToken,
+      bookUrl: opts.bookUrl,
+      originUrl: opts.originUrl,
+      chapterTitle: opts.chapterTitle,
+    });
+
+    if (!fetched.paragraphs.length) return;
+
+    await generateIfNeeded(env, {
+      bookKey: opts.bookKey,
+      chapterKey: opts.chapterKey,
+      bookName: opts.bookName,
+      author: opts.author,
+      chapterTitle: opts.chapterTitle,
+      paragraphs: fetched.paragraphs,
+    });
+  } catch (e) {
+    console.error(
+      `自动抓取正文失败 [${opts.bookName} - ${opts.chapterTitle}]:`,
+      (e as Error).message
+    );
+  }
 }
 
 async function summarize(
@@ -661,11 +735,14 @@ function buildReviewRule(origin: string, token: string) {
   return {
     enabled: true,
     // AnalyzeUrl.evalJS 的作用域里只有 book/page/java/source，没有 chapter，
-    // 章节标题必须走 java.get("title")，写 chapter.title 会直接抛异常
+    // 章节标题必须走 java.get("title")，写 chapter.title 会直接抛异常。
+    // bookUrl 与 origin 供服务端借 reader 反查正文，从而自动生成 AI 段评。
     reviewSummaryUrl:
       `${origin}/review/summary?book={{encodeURIComponent(book.name)}}` +
       `&author={{encodeURIComponent(book.author)}}` +
-      `&chapter={{encodeURIComponent(java.get("title"))}}${t}`,
+      `&chapter={{encodeURIComponent(java.get("title"))}}` +
+      `&bookUrl={{encodeURIComponent(book.bookUrl)}}` +
+      `&origin={{encodeURIComponent(book.origin)}}${t}`,
     summaryListRule: "$.list",
     summaryParagraphIndexRule: "$.paraIndex",
     summaryCountRule: "$.count",
@@ -816,6 +893,10 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
 /** 返回段评相关配置，供管理界面展示 */
 export async function handleGetReviewConfig(env: Env): Promise<Response> {
   const cfg = await loadAiConfig(env);
+  const readerCfg = await resolveReaderConfig(env);
+  const readerRow = (await env.DB.prepare(
+    `SELECT value FROM system_config WHERE key = 'reader_url'`
+  ).first()) as any;
   const stats = (await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM reviews WHERE origin = 'ai')    AS ai_count,
@@ -832,6 +913,9 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     density: cfg.density,
     personas: cfg.personas,
     defaultPersonas: DEFAULT_PERSONAS,
+    autoFetch: !!readerCfg,
+    readerUrl: String(readerRow?.value ?? ""),
+    effectiveReaderUrl: readerCfg?.readerUrl ?? "",
     stats: {
       aiCount: Number(stats?.ai_count ?? 0),
       humanCount: Number(stats?.human_count ?? 0),

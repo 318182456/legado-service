@@ -17,6 +17,9 @@ export default function ReviewsView() {
   const [density, setDensity] = useState('6');
   const [personas, setPersonas] = useState('');
   const [reviewToken, setReviewToken] = useState('');
+  const [autoFetch, setAutoFetch] = useState(true);
+  const [readerUrl, setReaderUrl] = useState('');
+  const [readerToken, setReaderToken] = useState('');
   const [saving, setSaving] = useState(false);
   const [mixin, setMixin] = useState('');
   const [injecting, setInjecting] = useState(false);
@@ -43,6 +46,8 @@ export default function ReviewsView() {
       setBaseUrl(cfg.baseUrl);
       setDensity(String(cfg.density));
       setPersonas(cfg.personas.join('\n'));
+      setAutoFetch(cfg.autoFetch);
+      setReaderUrl(cfg.readerUrl);
     } catch (e) {
       console.error('获取段评数据失败', e);
     } finally {
@@ -80,10 +85,13 @@ export default function ReviewsView() {
         gemini_base_url: baseUrl.trim().replace(/\/+$/, ''),
         review_density: density,
         review_personas: personas,
+        review_auto_fetch: autoFetch ? '1' : '0',
+        reader_url: readerUrl.trim().replace(/\/+$/, ''),
       };
       // 留空表示不改动已保存的 Key
       if (apiKey.trim()) payload.gemini_api_key = apiKey.trim();
       if (reviewToken.trim()) payload.review_token = reviewToken.trim();
+      if (readerToken.trim()) payload.reader_access_token = readerToken.trim();
       await api.saveSystemConfig(payload);
       setApiKey('');
       setReviewToken('');
@@ -280,6 +288,43 @@ export default function ReviewsView() {
               </Field>
             </div>
 
+            <div className="border-t border-outline-variant pt-4">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoFetch}
+                  onChange={(e) => setAutoFetch(e.target.checked)}
+                  className="accent-primary"
+                />
+                借 reader 自动抓正文（让规则书源也能有 AI 段评）
+              </label>
+              <p className="text-xs text-secondary mt-1 mb-3">
+                规则书源的段评 URL 只能发 GET，带不了正文。开启后服务端会调 reader 的
+                <code> getChapterList </code>与<code> getBookContent </code>
+                取回正文再生成——书源 JSON 直接随请求发过去，不需要书在 reader 书架上。
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="reader 地址（留空则用部署时的 READER_URL）">
+                  <input
+                    value={readerUrl}
+                    onChange={(e) => setReaderUrl(e.target.value)}
+                    disabled={!autoFetch}
+                    placeholder="http://legado-reader:8080"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono disabled:opacity-40"
+                  />
+                </Field>
+                <Field label="reader accessToken（未设密码则留空）">
+                  <input
+                    type="password"
+                    value={readerToken}
+                    onChange={(e) => setReaderToken(e.target.value)}
+                    disabled={!autoFetch}
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+                  />
+                </Field>
+              </div>
+            </div>
+
             <Field label="访问令牌 review_token（留空则不修改；配上后 /review/* 必须带 token）">
               <input
                 type="password"
@@ -328,11 +373,13 @@ export default function ReviewsView() {
 
         <div className="p-6 space-y-6">
           <div>
-            <p className="text-sm font-medium">A · 规则书源批量注入</p>
+            <p className="text-sm font-medium">A · 规则书源批量注入（推荐）</p>
             <p className="text-xs text-secondary mt-1 mb-3">
-              给订阅里的规则书源写入段评规则，App 同步订阅后即可看到批注。
+              给订阅里的规则书源写入段评规则，App 同步订阅后即可生效。
               JS 书源会自动跳过，已有其他段评规则的源不会被覆盖。
-              这类书源拿不到正文，<strong>只能显示批注，不会触发 AI 生成</strong>。
+              开启上方「借 reader 自动抓正文」后，<strong>这类书源同样会自动生成 AI 段评</strong>，
+              你只需要正常读书。首次进某一章图标不会立刻出现——后台抓正文加生成需要几秒，
+              翻页回来或下次进入即可看到。
             </p>
             <label className="flex items-center gap-2 mb-3 text-xs cursor-pointer select-none">
               <input
@@ -393,10 +440,10 @@ export default function ReviewsView() {
           </div>
 
           <div className="border-t border-outline-variant pt-6">
-            <p className="text-sm font-medium">B · JS 书源（全功能）</p>
+            <p className="text-sm font-medium">B · JS 书源（更快、无需 reader）</p>
             <p className="text-xs text-secondary mt-1 mb-3">
-              只有 JS 书源能在 <code>getReviewSummary</code> 里拿到正文投喂给服务端，
-              也就只有它能吃到 AI 段评。已有 JS 书源就用混入脚本，从零开始就用完整模板。
+              JS 书源能在 <code>getReviewSummary</code> 里直接把正文投喂过来，
+              不必绕 reader 反查目录，首章出图标也更快。已有 JS 书源就用混入脚本，从零开始用完整模板。
             </p>
             <div className="flex flex-wrap gap-2">
               <button
