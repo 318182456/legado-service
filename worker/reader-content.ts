@@ -191,12 +191,68 @@ export function splitParagraphs(text: string): string[] {
     .filter(Boolean);
 }
 
-/** reader 地址优先取配置，回落到部署时的 READER_URL */
+// ─── 登录 ─────────────────────────────────────────────────────────
+
+/** reader 的 token 缓存时长（秒）。它自己的有效期更长，这里短一些以便及时换新 */
+const TOKEN_CACHE_TTL = 3 * 86400;
+
+/** reader 报的这几种错都意味着要重新登录 */
+export function isReaderAuthError(message: string): boolean {
+  return /NEED_LOGIN|请登录|登录后使用|token.*(过期|失效)/i.test(message);
+}
+
+/**
+ * 用用户名密码登录 reader，返回它认的 accessToken（格式为 username:token）。
+ * isLogin 必须为 true——传 false 时 reader 会走注册流程，可能凭空建出用户。
+ */
+export async function readerLogin(
+  readerUrl: string,
+  username: string,
+  password: string
+): Promise<string> {
+  const base = readerUrl.replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}/reader3/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, isLogin: true }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`登录 reader 失败：HTTP ${res.status}`);
+
+    const data = (await res.json()) as any;
+    if (data?.isSuccess === false) {
+      throw new Error(`登录 reader 失败：${data?.errorMsg ?? "未知错误"}`);
+    }
+    const user = data?.data ?? data;
+    const token = String(user?.token ?? "").trim();
+    const name = String(user?.username ?? username).trim();
+    if (!token) throw new Error("登录 reader 成功但未返回 token");
+
+    return `${name}:${token}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 丢弃缓存的 token，下次请求会重新登录 */
+export async function clearReaderToken(env: Env, username: string): Promise<void> {
+  await env.KV.delete(`reader_token:${username}`);
+}
+
+/**
+ * reader 地址优先取配置，回落到部署时的 READER_URL。
+ * 配了用户名密码就自动登录换 token 并缓存；显式填的 accessToken 优先级最高。
+ */
 export async function resolveReaderConfig(
   env: Env
-): Promise<{ readerUrl: string; accessToken?: string } | null> {
+): Promise<{ readerUrl: string; accessToken?: string; username?: string } | null> {
   const rows = await env.DB.prepare(
-    `SELECT key, value FROM system_config WHERE key IN ('reader_url', 'reader_access_token', 'review_auto_fetch')`
+    `SELECT key, value FROM system_config
+      WHERE key IN ('reader_url', 'reader_access_token', 'review_auto_fetch',
+                    'reader_username', 'reader_password')`
   ).all();
 
   const cfg: Record<string, string> = {};
@@ -208,8 +264,25 @@ export async function resolveReaderConfig(
   const readerUrl = (cfg["reader_url"] || env.READER_URL || "").trim();
   if (!readerUrl) return null;
 
-  return {
-    readerUrl,
-    accessToken: cfg["reader_access_token"]?.trim() || undefined,
-  };
+  const explicit = cfg["reader_access_token"]?.trim();
+  if (explicit) return { readerUrl, accessToken: explicit };
+
+  const username = cfg["reader_username"]?.trim();
+  const password = cfg["reader_password"]?.trim();
+  if (!username || !password) return { readerUrl };
+
+  const cacheKey = `reader_token:${username}`;
+  const cached = await env.KV.get(cacheKey);
+  if (cached) return { readerUrl, accessToken: cached, username };
+
+  try {
+    const token = await readerLogin(readerUrl, username, password);
+    await env.KV.put(cacheKey, token, { expirationTtl: TOKEN_CACHE_TTL });
+    console.log(`[段评] 已登录 reader，用户 ${username}`);
+    return { readerUrl, accessToken: token, username };
+  } catch (e) {
+    console.error(`[段评] ${(e as Error).message}`);
+    // 登录失败也把地址返回，让后续步骤报出更具体的错误
+    return { readerUrl, username };
+  }
 }

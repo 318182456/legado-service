@@ -31,6 +31,8 @@ import {
   normalizeTitle,
   splitParagraphs,
   readerGetBookshelf,
+  isReaderAuthError,
+  clearReaderToken,
 } from "../reader-content";
 
 const DETAIL_PAGE_SIZE = 20;
@@ -288,7 +290,9 @@ async function resolveBookLocation(
   }
 
   try {
-    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
+    const shelf = await withReaderRetry(env, readerCfg, (token) =>
+      readerGetBookshelf(readerCfg.readerUrl, token)
+    );
     console.log(`[段评] 为《${opts.bookName}》查 reader 书架，返回 ${shelf.length} 本书`);
 
     if (!shelf.length) {
@@ -336,6 +340,29 @@ async function resolveBookLocation(
   }
 }
 
+/**
+ * reader 的 token 会过期。撞到登录错误时清掉缓存重登一次，
+ * 否则一旦过期就要等缓存自然到期才能恢复。
+ */
+async function withReaderRetry<T>(
+  env: Env,
+  cfg: { readerUrl: string; accessToken?: string; username?: string },
+  fn: (token?: string) => Promise<T>
+): Promise<T> {
+  try {
+    return await fn(cfg.accessToken);
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (!cfg.username || !isReaderAuthError(msg)) throw e;
+
+    console.warn(`[段评] reader token 似已失效（${msg}），重新登录后重试`);
+    await clearReaderToken(env, cfg.username);
+    const fresh = await resolveReaderConfig(env);
+    if (!fresh?.accessToken) throw e;
+    return await fn(fresh.accessToken);
+  }
+}
+
 /** 列出 reader 书架，供诊断界面点选书籍 */
 export async function handleListReaderShelf(env: Env): Promise<Response> {
   const readerCfg = await resolveReaderConfig(env);
@@ -344,7 +371,9 @@ export async function handleListReaderShelf(env: Env): Promise<Response> {
   }
 
   try {
-    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
+    const shelf = await withReaderRetry(env, readerCfg, (token) =>
+      readerGetBookshelf(readerCfg.readerUrl, token)
+    );
     return ok({
       readerUrl: readerCfg.readerUrl,
       total: shelf.length,
@@ -409,13 +438,15 @@ async function autoGenerateViaReader(
     }
 
     console.log(`[段评] ${tag} 开始借 reader 抓正文 → ${readerCfg.readerUrl}`);
-    const fetched = await fetchParagraphsViaReader(env, {
-      readerUrl: readerCfg.readerUrl,
-      accessToken: readerCfg.accessToken,
-      bookUrl: opts.bookUrl,
-      originUrl: opts.originUrl,
-      chapterTitle: opts.chapterTitle,
-    });
+    const fetched = await withReaderRetry(env, readerCfg, (token) =>
+      fetchParagraphsViaReader(env, {
+        readerUrl: readerCfg.readerUrl,
+        accessToken: token,
+        bookUrl: opts.bookUrl,
+        originUrl: opts.originUrl,
+        chapterTitle: opts.chapterTitle,
+      })
+    );
 
     if (!fetched.paragraphs.length) {
       console.warn(`[段评] ${tag} 正文分段后为空，放弃`);
@@ -1347,6 +1378,16 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
 /** 返回段评相关配置，供管理界面展示 */
 export async function handleGetReviewConfig(env: Env): Promise<Response> {
   const cfg = await loadAiConfig(env);
+
+  // 把容器实际跑的版本回给界面：段评功能迭代快，
+  // 「改了没生效」十次有九次是镜像还没换
+  let version = "";
+  try {
+    version = (await fs.readFile(path.join(process.cwd(), "VERSION"), "utf-8")).trim();
+  } catch {
+    version = "unknown";
+  }
+
   const readerCfg = await resolveReaderConfig(env);
   const readerRow = (await env.DB.prepare(
     `SELECT value FROM system_config WHERE key = 'reader_url'`
@@ -1367,7 +1408,11 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     density: cfg.density,
     personas: cfg.personas,
     defaultPersonas: DEFAULT_PERSONAS,
+    version,
     autoFetch: !!readerCfg,
+    readerAuth: readerCfg?.accessToken
+      ? (readerCfg.username ? `已登录（${readerCfg.username}）` : "使用固定 accessToken")
+      : "未认证",
     readerUrl: String(readerRow?.value ?? ""),
     effectiveReaderUrl: readerCfg?.readerUrl ?? "",
     stats: {

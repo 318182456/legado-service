@@ -278,7 +278,9 @@ export interface ReviewConfig {
   density: number;
   personas: string[];
   defaultPersonas: string[];
+  version: string;
   autoFetch: boolean;
+  readerAuth: string;
   readerUrl: string;
   effectiveReaderUrl: string;
   stats: { aiCount: number; humanCount: number; chapterCount: number; failedCount: number };

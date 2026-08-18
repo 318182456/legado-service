@@ -20,6 +20,8 @@ export default function ReviewsView() {
   const [autoFetch, setAutoFetch] = useState(true);
   const [readerUrl, setReaderUrl] = useState('');
   const [readerToken, setReaderToken] = useState('');
+  const [readerUser, setReaderUser] = useState('');
+  const [readerPass, setReaderPass] = useState('');
   const [saving, setSaving] = useState(false);
   const [mixin, setMixin] = useState('');
   const [injecting, setInjecting] = useState(false);
@@ -59,6 +61,9 @@ export default function ReviewsView() {
       setPersonas(cfg.personas.join('\n'));
       setAutoFetch(cfg.autoFetch);
       setReaderUrl(cfg.readerUrl);
+      if (cfg.readerAuth?.startsWith('已登录')) {
+        setReaderUser(cfg.readerAuth.replace(/^已登录（|）$/g, ''));
+      }
     } catch (e) {
       console.error('获取段评数据失败', e);
     } finally {
@@ -103,9 +108,12 @@ export default function ReviewsView() {
       if (apiKey.trim()) payload.gemini_api_key = apiKey.trim();
       if (reviewToken.trim()) payload.review_token = reviewToken.trim();
       if (readerToken.trim()) payload.reader_access_token = readerToken.trim();
+      if (readerUser.trim()) payload.reader_username = readerUser.trim();
+      if (readerPass.trim()) payload.reader_password = readerPass.trim();
       await api.saveSystemConfig(payload);
       setApiKey('');
       setReviewToken('');
+      setReaderPass('');
       await fetchAll();
       alert('段评配置已保存');
     } catch (e) {
@@ -280,6 +288,11 @@ export default function ReviewsView() {
           <h2 className="text-2xl font-bold tracking-tight">段评</h2>
           <p className="text-sm text-secondary mt-1">
             AI 陪读评论与个人批注。App 端段评是只读的，批注只能从这里发布。
+            {config?.version && (
+              <span className="ml-2 px-1.5 py-0.5 rounded bg-surface-container-low text-xs font-mono">
+                服务 v{config.version}
+              </span>
+            )}
           </p>
         </div>
         <button
@@ -379,12 +392,46 @@ export default function ReviewsView() {
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono disabled:opacity-40"
                   />
                 </Field>
-                <Field label="reader accessToken（未设密码则留空）">
+                <Field label={`reader 认证状态${config?.readerAuth ? `：${config.readerAuth}` : ''}`}>
+                  <input
+                    value={config?.readerAuth ?? ''}
+                    readOnly
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-sm text-secondary"
+                  />
+                </Field>
+              </div>
+
+              <p className="text-xs text-secondary mt-3 mb-2">
+                reader 开了多用户时必须认证，否则读到的是空书架。填用户名密码即可，
+                服务端会自己登录换取 token 并缓存，过期自动重登。
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Field label="reader 用户名">
+                  <input
+                    value={readerUser}
+                    onChange={(e) => setReaderUser(e.target.value)}
+                    disabled={!autoFetch}
+                    autoComplete="off"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+                  />
+                </Field>
+                <Field label="reader 密码（留空则不修改）">
+                  <input
+                    type="password"
+                    value={readerPass}
+                    onChange={(e) => setReaderPass(e.target.value)}
+                    disabled={!autoFetch}
+                    autoComplete="new-password"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+                  />
+                </Field>
+                <Field label="或直接填 accessToken（优先于账号密码）">
                   <input
                     type="password"
                     value={readerToken}
                     onChange={(e) => setReaderToken(e.target.value)}
                     disabled={!autoFetch}
+                    placeholder="username:token"
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm disabled:opacity-40"
                   />
                 </Field>
