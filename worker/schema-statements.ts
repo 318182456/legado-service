@@ -107,5 +107,42 @@ export const SCHEMA_STATEMENTS = [
   )`,
     `DROP INDEX IF EXISTS idx_parse_history_url_unique`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_parse_history_url_unique ON parse_history(url)`,
-    `CREATE INDEX IF NOT EXISTS idx_parse_history_updated_at ON parse_history(updated_at)`
+    `CREATE INDEX IF NOT EXISTS idx_parse_history_updated_at ON parse_history(updated_at)`,
+    // ─── 段评 ────────────────────────────────────────────────────
+    // book_key/chapter_key 由书名作者与章节标题散列而来，换书源后批注依然命中
+    `CREATE TABLE IF NOT EXISTS review_chapters (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_key      TEXT    NOT NULL,
+    chapter_key   TEXT    NOT NULL,
+    book_name     TEXT    NOT NULL DEFAULT '',
+    author        TEXT    NOT NULL DEFAULT '',
+    chapter_title TEXT    NOT NULL DEFAULT '',
+    para_count    INTEGER NOT NULL DEFAULT 0,
+    status        TEXT    NOT NULL DEFAULT 'pending',
+    error         TEXT    DEFAULT NULL,
+    generated_at  TEXT    DEFAULT NULL,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+  )`,
+    `DROP INDEX IF EXISTS idx_review_chapters_unique`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_chapters_unique ON review_chapters(book_key, chapter_key)`,
+    `CREATE INDEX IF NOT EXISTS idx_review_chapters_status ON review_chapters(status)`,
+    // para_index 为 -1 时表示章节标题；para_hash 用于校验段落是否被净化规则改动
+    `CREATE TABLE IF NOT EXISTS reviews (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_key    TEXT    NOT NULL,
+    chapter_key TEXT    NOT NULL,
+    para_index  INTEGER NOT NULL DEFAULT 1,
+    para_hash   TEXT    NOT NULL DEFAULT '',
+    author      TEXT    NOT NULL DEFAULT '',
+    avatar      TEXT    DEFAULT NULL,
+    badge       TEXT    DEFAULT NULL,
+    content     TEXT    NOT NULL,
+    reply_to    INTEGER DEFAULT NULL,
+    origin      TEXT    NOT NULL DEFAULT 'ai',
+    like_count  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+  )`,
+    `CREATE INDEX IF NOT EXISTS idx_reviews_locate ON reviews(book_key, chapter_key, para_index)`,
+    `CREATE INDEX IF NOT EXISTS idx_reviews_reply_to ON reviews(reply_to)`,
+    `CREATE INDEX IF NOT EXISTS idx_reviews_origin ON reviews(origin)`
 ];

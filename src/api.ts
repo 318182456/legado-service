@@ -246,5 +246,96 @@ export const saveSystemConfig = (config: Record<string, string>) =>
     body: JSON.stringify(config)
   });
 
+// ---------- 段评 ----------
+
+export interface ReviewItem {
+  id: number;
+  book_key: string;
+  chapter_key: string;
+  para_index: number;
+  author: string;
+  badge: string | null;
+  content: string;
+  reply_to: number | null;
+  origin: "ai" | "human";
+  like_count: number;
+  created_at: string;
+}
+
+export interface ReviewBook {
+  book_key: string;
+  book_name: string;
+  author: string;
+  chapter_count: number;
+  failed_count: number;
+}
+
+export interface ReviewConfig {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  density: number;
+  personas: string[];
+  defaultPersonas: string[];
+  stats: { aiCount: number; humanCount: number; chapterCount: number; failedCount: number };
+}
+
+export const getReviewConfig = () => apiFetch<ReviewConfig>("/api/reviews/config");
+
+export const getReviewBooks = (page = 1) =>
+  apiFetch<{ books: ReviewBook[]; total: number; totalPages: number; page: number }>(
+    `/api/reviews/books?page=${page}`
+  );
+
+export const getReviews = (bookKey = "", chapterKey = "", page = 1) =>
+  apiFetch<{ reviews: ReviewItem[]; total: number; totalPages: number; page: number }>(
+    `/api/reviews?bookKey=${encodeURIComponent(bookKey)}&chapterKey=${encodeURIComponent(chapterKey)}&page=${page}`
+  );
+
+export const addReview = (data: {
+  bookName: string;
+  author?: string;
+  chapterTitle: string;
+  paraIndex: number;
+  content: string;
+  penName?: string;
+  replyTo?: number;
+}) => apiFetch<{ id: number; bookKey: string; chapterKey: string }>("/api/reviews", {
+  method: "POST",
+  body: JSON.stringify(data),
+});
+
+export const deleteReview = (id: number) =>
+  apiFetch<any>(`/api/reviews/${id}`, { method: "DELETE" });
+
+export const getReviewMixin = () =>
+  apiFetch<{ script: string }>("/api/reviews/mixin");
+
+export const getReviewJsSource = () =>
+  apiFetch<{ script: string }>("/api/reviews/js-source");
+
+export interface InjectResult {
+  mode: "inject" | "revoke";
+  changed: number;
+  jsSkipped: number;
+  untouched: number;
+  broken: number;
+  hasToken: boolean;
+  origin: string;
+}
+
+export const injectReviewRule = (opts: { subscriptionId?: number; revoke?: boolean } = {}) =>
+  apiFetch<InjectResult>("/api/reviews/inject", {
+    method: "POST",
+    body: JSON.stringify(opts),
+  });
+
+export const clearAiReviews = (bookKey: string, chapterKey?: string) =>
+  apiFetch<any>("/api/reviews/clear-ai", {
+    method: "POST",
+    body: JSON.stringify({ bookKey, chapterKey }),
+  });
+
 
 

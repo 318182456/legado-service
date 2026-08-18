@@ -20,6 +20,7 @@ import { handleScheduled } from "./handlers/scheduled";
 import { proxyToReader } from "./handlers/proxy";
 import * as txtTocRules from "./handlers/txt-toc-rules";
 import * as dictRules from "./handlers/dict-rules";
+import * as reviews from "./handlers/reviews";
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -51,7 +52,7 @@ export default {
 
     // 数据库运行时初始化
     // 仅针对写操作或未经验证的实例执行初始化检查，且优先依赖内存缓存
-    if (path.startsWith("/api/")) {
+    if (path.startsWith("/api/") || path.startsWith("/review/")) {
       const isWrite = method !== "GET";
       if (isWrite || !schemaVerified) {
         try {
@@ -81,6 +82,12 @@ export default {
       if (path === "/subscribe/dictRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "dictRules");
       if (path === "/subscribe/index" && method === "GET") return subscribe.handleSubscribeIndex(request, env);
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
+
+      // ── /review/* (公开，供 Legado JS 书源调用) ───────────────────
+      if (path === "/review/summary" && method === "POST") return reviews.handleReviewSummary(request, env);
+      if (path === "/review/summary" && method === "GET") return reviews.handleReviewSummaryQuery(env, url);
+      if (path === "/review/detail" && method === "GET") return reviews.handleReviewDetail(env, url);
+      if (path === "/review/replies" && method === "GET") return reviews.handleReviewReplies(env, url);
 
       // ── /api/auth (公开) ──────────────────────────────────────────
       if (path === "/api/auth/login" && method === "POST") return auth.handleLogin(request, env);
@@ -200,6 +207,23 @@ export default {
         if (method === "DELETE") return dictRules.handleDictRuleAction(env, id, "delete");
         if (method === "PATCH") return dictRules.handleDictRuleAction(env, id, "toggle", request);
         if (method === "PUT") return dictRules.handleDictRuleAction(env, id, "update", request);
+      }
+
+      // ── /api/reviews (段评管理) ───────────────────────────────────
+      if (path === "/api/reviews") {
+        if (method === "GET") return reviews.handleListReviews(env, url);
+        if (method === "POST") return reviews.handleAddReview(request, env);
+      }
+      if (path === "/api/reviews/books" && method === "GET") return reviews.handleListReviewBooks(env, url);
+      if (path === "/api/reviews/config" && method === "GET") return reviews.handleGetReviewConfig(env);
+      if (path === "/api/reviews/mixin" && method === "GET") return reviews.handleReviewMixinScript(request, env);
+      if (path === "/api/reviews/js-source" && method === "GET") return reviews.handleReviewJsSourceTemplate(request, env);
+      if (path === "/api/reviews/clear-ai" && method === "POST") return reviews.handleClearAiReviews(request, env);
+      if (path === "/api/reviews/inject" && method === "POST") return reviews.handleInjectReviewRule(request, env);
+
+      const reviewMatch = path.match(/^\/api\/reviews\/(\d+)$/);
+      if (reviewMatch && method === "DELETE") {
+        return reviews.handleDeleteReview(env, Number(reviewMatch[1]));
       }
 
       // ── /repo/* (R2 资源代理) ───────────────────────────────────

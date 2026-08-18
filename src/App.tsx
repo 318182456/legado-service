@@ -11,7 +11,8 @@ import {
   Package,
   BookOpen,
   List,
-  Compass
+  Compass,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as api from './api';
@@ -36,6 +37,7 @@ import SourceListView from './views/SourceListView';
 import RulesView from './views/RulesView';
 import TxtTocRulesView from './views/TxtTocRulesView';
 import DictRulesView from './views/DictRulesView';
+import ReviewsView from './views/ReviewsView';
 import bgAssetsView from './views/AssetsView';
 import SettingsView from './views/SettingsView';
 
@@ -279,6 +281,7 @@ export default function App() {
         />
       );
 
+      case 'reviews': return <ReviewsView />;
       case 'assets': return <AssetsView />;
       case 'settings': return <SettingsView />;
       default: return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} />;
@@ -315,6 +318,7 @@ export default function App() {
           <NavItem active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} icon={<Sparkles size={20} />} label={isSidebarOpen ? "替换净化" : ""} />
           <NavItem active={activeTab === 'txt-toc-rules'} onClick={() => setActiveTab('txt-toc-rules')} icon={<List size={20} />} label={isSidebarOpen ? "目录规则" : ""} />
           <NavItem active={activeTab === 'dict-rules'} onClick={() => setActiveTab('dict-rules')} icon={<Compass size={20} />} label={isSidebarOpen ? "字典规则" : ""} />
+          <NavItem active={activeTab === 'reviews'} onClick={() => setActiveTab('reviews')} icon={<MessageSquare size={20} />} label={isSidebarOpen ? "段评" : ""} />
 
           <div className="my-4 border-t border-outline-variant/30" />
           <NavItem active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<Package size={20} />} label={isSidebarOpen ? "资源管理 (R2)" : ""} />
