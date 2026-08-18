@@ -314,6 +314,7 @@ export const deleteReview = (id: number) =>
 
 export interface DiagStep {
   name: string;
+  status: "ok" | "fail" | "skip";
   ok: boolean;
   detail: string;
 }

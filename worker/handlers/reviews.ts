@@ -18,6 +18,8 @@ import {
   loadAiConfig,
   createGenerator,
   DEFAULT_PERSONAS,
+  describeEndpoint,
+  detectProvider,
   type ReviewDraft,
 } from "../review-ai";
 import {
@@ -28,6 +30,7 @@ import {
   readerPost,
   normalizeTitle,
   splitParagraphs,
+  readerGetBookshelf,
 } from "../reader-content";
 
 const DETAIL_PAGE_SIZE = 20;
@@ -175,6 +178,17 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
   );
 
   if (bookUrl && originUrl) {
+    // 先把定位信息记下来：诊断和后续补生成就不用再手工输入
+    await rememberChapterLocation(env, {
+      bookKey,
+      chapterKey,
+      bookName,
+      author,
+      chapterTitle,
+      bookUrl,
+      originUrl,
+    });
+
     void autoGenerateViaReader(env, {
       bookKey,
       chapterKey,
@@ -187,6 +201,98 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
   }
 
   return json({ list });
+}
+
+/** 登记章节的 bookUrl / origin，不覆盖已有的生成状态 */
+async function rememberChapterLocation(
+  env: Env,
+  opts: {
+    bookKey: string;
+    chapterKey: string;
+    bookName: string;
+    author: string;
+    chapterTitle: string;
+    bookUrl: string;
+    originUrl: string;
+  }
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO review_chapters
+         (book_key, chapter_key, book_name, author, chapter_title, book_url, origin_url, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+       ON CONFLICT(book_key, chapter_key) DO UPDATE SET
+         book_url = excluded.book_url,
+         origin_url = excluded.origin_url,
+         book_name = excluded.book_name,
+         author = excluded.author,
+         chapter_title = excluded.chapter_title`
+    )
+      .bind(
+        opts.bookKey,
+        opts.chapterKey,
+        opts.bookName,
+        opts.author,
+        opts.chapterTitle,
+        opts.bookUrl,
+        opts.originUrl
+      )
+      .run();
+  } catch (e) {
+    console.error("[段评] 记录章节定位信息失败:", (e as Error).message);
+  }
+}
+
+/**
+ * 诊断没填 bookUrl 时的反查顺序：
+ * 1. 本章此前被 App 请求过 → review_chapters 里有记录
+ * 2. 同一本书的其它章节有记录 → 复用它的 bookUrl
+ * 3. reader 书架上有这本书 → 按书名作者匹配
+ */
+async function resolveBookLocation(
+  env: Env,
+  opts: { bookKey: string; chapterKey: string; bookName: string; author: string }
+): Promise<{ bookUrl: string; originUrl: string; from: string } | null> {
+  const exact = (await env.DB.prepare(
+    `SELECT book_url, origin_url FROM review_chapters
+      WHERE book_key = ? AND chapter_key = ? AND book_url IS NOT NULL AND origin_url IS NOT NULL`
+  )
+    .bind(opts.bookKey, opts.chapterKey)
+    .first()) as any;
+  if (exact?.book_url) {
+    return { bookUrl: exact.book_url, originUrl: exact.origin_url, from: "本章此前的请求记录" };
+  }
+
+  const sameBook = (await env.DB.prepare(
+    `SELECT book_url, origin_url FROM review_chapters
+      WHERE book_key = ? AND book_url IS NOT NULL AND origin_url IS NOT NULL
+      ORDER BY id DESC LIMIT 1`
+  )
+    .bind(opts.bookKey)
+    .first()) as any;
+  if (sameBook?.book_url) {
+    return { bookUrl: sameBook.book_url, originUrl: sameBook.origin_url, from: "同书其它章节的记录" };
+  }
+
+  // 最后试 reader 书架
+  try {
+    const readerCfg = await resolveReaderConfig(env);
+    if (!readerCfg) return null;
+    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
+    const wantName = normalizeTitle(opts.bookName);
+    const wantAuthor = normalizeTitle(opts.author);
+    const hit = shelf.find((b: any) => {
+      if (normalizeTitle(b?.name ?? "") !== wantName) return false;
+      return !wantAuthor || normalizeTitle(b?.author ?? "") === wantAuthor;
+    });
+    if (hit?.bookUrl && hit?.origin) {
+      return { bookUrl: hit.bookUrl, originUrl: hit.origin, from: "reader 书架" };
+    }
+  } catch {
+    // 书架取不到就算了，让诊断提示手工填
+  }
+
+  return null;
 }
 
 /**
@@ -937,8 +1043,12 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
 
 // ─── 诊断 ─────────────────────────────────────────────────────────
 
+type DiagStatus = "ok" | "fail" | "skip";
+
 interface DiagStep {
   name: string;
+  status: DiagStatus;
+  /** 兼容旧字段：skip 也算通过 */
   ok: boolean;
   detail: string;
 }
@@ -960,25 +1070,25 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
   const bookName = String(body?.bookName ?? "").trim();
   const chapterTitle = String(body?.chapterTitle ?? "").trim();
   const author = String(body?.author ?? "").trim();
-  const bookUrl = String(body?.bookUrl ?? "").trim();
-  const originUrl = String(body?.origin ?? "").trim();
+  let bookUrl = String(body?.bookUrl ?? "").trim();
+  let originUrl = String(body?.origin ?? "").trim();
 
   if (!bookName || !chapterTitle) return err("书名和章节标题不能为空");
 
   const steps: DiagStep[] = [];
-  const push = (name: string, ok: boolean, detail: string) => {
-    steps.push({ name, ok, detail });
-    console.log(`[段评诊断] ${ok ? "OK " : "FAIL"} ${name}: ${detail}`);
+  const push = (name: string, status: DiagStatus, detail: string) => {
+    steps.push({ name, status, ok: status !== "fail", detail });
+    console.log(`[段评诊断] ${status.toUpperCase().padEnd(4)} ${name}: ${detail}`);
   };
 
   const bookKey = await bookKeyOf(bookName, author);
   const chapterKey = await chapterKeyOf(chapterTitle);
-  push("定位键计算", true, `bookKey=${bookKey.slice(0, 12)}… chapterKey=${chapterKey.slice(0, 12)}…`);
+  push("定位键计算", "ok", `bookKey=${bookKey.slice(0, 12)}… chapterKey=${chapterKey.slice(0, 12)}…`);
 
   const existing = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
   push(
     "库中已有段评",
-    true,
+    "ok",
     existing.length
       ? `${existing.length} 个段落有评论：${existing.map((e) => `第${e.paraIndex}段×${e.count}`).join("、")}`
       : "无——App 端因此不会显示任何图标"
@@ -991,7 +1101,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
     .first()) as any;
   push(
     "章节生成状态",
-    chapterRow?.status !== "failed",
+    chapterRow?.status === "failed" ? "fail" : "ok",
     chapterRow
       ? `status=${chapterRow.status}${chapterRow.error ? ` error=${chapterRow.error}` : ""}${
           chapterRow.status !== "pending" ? "（非 pending 会跳过生成，需先清空重置）" : ""
@@ -1003,46 +1113,65 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
     `SELECT value FROM system_config WHERE key = 'review_token'`
   ).first()) as any;
   const token = String(tokenRow?.value ?? "").trim();
-  push("访问令牌", true, token ? `已配置，注入的 URL 必须带 token=${token.slice(0, 4)}…` : "未配置，/review/* 对外开放");
+  push("访问令牌", "ok", token ? `已配置，注入的 URL 必须带 token=${token.slice(0, 4)}…` : "未配置，/review/* 对外开放");
 
   const aiCfg = await loadAiConfig(env);
   push(
     "模型配置",
-    !!aiCfg.apiKey,
+    aiCfg.apiKey ? "ok" : "fail",
     aiCfg.apiKey
-      ? `${aiCfg.provider} / ${aiCfg.model} @ ${aiCfg.baseUrl}，每章 ${aiCfg.density} 条`
+      ? `${detectProvider(aiCfg)} / ${aiCfg.model}，每章 ${aiCfg.density} 条`
       : "未配置 API Key —— 不会生成任何 AI 段评"
   );
+  if (aiCfg.apiKey) {
+    // base URL 填错是最常见的坑，把最终地址摆出来让人一眼核对
+    push(
+      "模型请求地址",
+      "ok",
+      describeEndpoint(aiCfg) +
+        (detectProvider(aiCfg) === "openai-compatible"
+          ? "（按 /v1 结尾判定为 OpenAI 兼容端点）"
+          : "（原生 Gemini 端点）")
+    );
+  }
 
   if (!bookUrl || !originUrl) {
-    push(
-      "自动抓正文",
-      false,
-      "未提供 bookUrl / origin。若来自 App 请求，说明注入的 URL 是旧版，请重新注入一次"
-    );
-    return ok({ steps, canGenerate: false });
+    const found = await resolveBookLocation(env, { bookKey, chapterKey, bookName, author });
+    if (found) {
+      bookUrl = found.bookUrl;
+      originUrl = found.originUrl;
+      push("反查书籍链接", "ok", `取自${found.from}：${bookUrl}`);
+    } else {
+      push(
+        "反查书籍链接",
+        "skip",
+        "库里还没有这本书的 bookUrl，reader 书架上也没找到。" +
+          "让 App 用新注入的书源打开一次本章即可自动记下；或手工填入后重试"
+      );
+      return ok({ steps, canGenerate: false });
+    }
   }
 
   const readerCfg = await resolveReaderConfig(env);
   if (!readerCfg) {
-    push("reader 配置", false, "自动抓取已关闭，或 reader 地址为空（未配 reader_url 且无 READER_URL）");
+    push("reader 配置", "fail", "自动抓取已关闭，或 reader 地址为空（未配 reader_url 且无 READER_URL）");
     return ok({ steps, canGenerate: false });
   }
-  push("reader 配置", true, readerCfg.readerUrl + (readerCfg.accessToken ? "（带 accessToken）" : ""));
+  push("reader 配置", "ok", readerCfg.readerUrl + (readerCfg.accessToken ? "（带 accessToken）" : ""));
 
   const bookSource = await findBookSource(env, originUrl);
   if (!bookSource) {
-    push("查找书源", false, `订阅库里没有 book_source_url = ${originUrl} 的记录`);
+    push("查找书源", "fail", `订阅库里没有 book_source_url = ${originUrl} 的记录`);
     return ok({ steps, canGenerate: false });
   }
-  push("查找书源", true, `${bookSource.bookSourceName ?? "(无名)"} → ${originUrl}`);
+  push("查找书源", "ok", `${bookSource.bookSourceName ?? "(无名)"} → ${originUrl}`);
 
   let toc: any[];
   try {
     toc = await loadToc(env, readerCfg.readerUrl, bookUrl, bookSource, readerCfg.accessToken);
-    push("抓取目录", true, `共 ${toc.length} 章，例：${toc.slice(0, 3).map((c) => c?.title).join(" / ")}`);
+    push("抓取目录", "ok", `共 ${toc.length} 章，例：${toc.slice(0, 3).map((c) => c?.title).join(" / ")}`);
   } catch (e) {
-    push("抓取目录", false, (e as Error).message);
+    push("抓取目录", "fail", (e as Error).message);
     return ok({ steps, canGenerate: false });
   }
 
@@ -1059,12 +1188,12 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
   if (index < 0) {
     push(
       "定位章节",
-      false,
+      "fail",
       `目录里找不到「${chapterTitle}」。目录标题样例：${toc.slice(0, 5).map((c) => c?.title).join(" / ")}`
     );
     return ok({ steps, canGenerate: false });
   }
-  push("定位章节", true, `${how} → index=${index}，目录标题「${toc[index]?.title}」`);
+  push("定位章节", "ok", `${how} → index=${index}，目录标题「${toc[index]?.title}」`);
 
   let paragraphs: string[];
   try {
@@ -1077,26 +1206,26 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
     const text = typeof content === "string" ? content : String(content ?? "");
     paragraphs = splitParagraphs(text);
     if (!paragraphs.length) {
-      push("抓取正文", false, "正文为空或分段后无内容");
+      push("抓取正文", "fail", "正文为空或分段后无内容");
       return ok({ steps, canGenerate: false });
     }
     push(
       "抓取正文",
-      true,
+      "ok",
       `${paragraphs.length} 段，首段：${paragraphs[0].slice(0, 40)}…`
     );
   } catch (e) {
-    push("抓取正文", false, (e as Error).message);
+    push("抓取正文", "fail", (e as Error).message);
     return ok({ steps, canGenerate: false });
   }
 
   if (!aiCfg.apiKey) {
-    push("调用模型", false, "跳过：未配置 API Key");
+    push("调用模型", "skip", "未配置 API Key，跳过");
     return ok({ steps, canGenerate: false });
   }
 
   if (body?.generate === false) {
-    push("调用模型", true, "已跳过（诊断模式未要求生成）");
+    push("调用模型", "skip", "已跳过（诊断模式未要求生成）");
     return ok({ steps, canGenerate: true });
   }
 
@@ -1109,7 +1238,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
       density: aiCfg.density,
       personas: aiCfg.personas,
     });
-    push("调用模型", drafts.length > 0, `返回 ${drafts.length} 条有效评论`);
+    push("调用模型", drafts.length > 0 ? "ok" : "fail", `返回 ${drafts.length} 条有效评论`);
 
     if (drafts.length) {
       await env.DB.prepare(
@@ -1133,10 +1262,10 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
         .run();
 
       const after = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
-      push("写入数据库", true, `现有 ${after.length} 个段落带评论，回 App 重进本章即可看到图标`);
+      push("写入数据库", "ok", `现有 ${after.length} 个段落带评论，回 App 重进本章即可看到图标`);
     }
   } catch (e) {
-    push("调用模型", false, (e as Error).message);
+    push("调用模型", "fail", (e as Error).message);
     return ok({ steps, canGenerate: false });
   }
 

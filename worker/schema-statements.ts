@@ -126,6 +126,9 @@ export const SCHEMA_STATEMENTS = [
     `DROP INDEX IF EXISTS idx_review_chapters_unique`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_chapters_unique ON review_chapters(book_key, chapter_key)`,
     `CREATE INDEX IF NOT EXISTS idx_review_chapters_status ON review_chapters(status)`,
+    // 记下 App 请求时带来的定位信息，诊断和补生成就不必再手工输入
+    `ALTER TABLE review_chapters ADD COLUMN book_url TEXT DEFAULT NULL`,
+    `ALTER TABLE review_chapters ADD COLUMN origin_url TEXT DEFAULT NULL`,
     // para_index 为 -1 时表示章节标题；para_hash 用于校验段落是否被净化规则改动
     `CREATE TABLE IF NOT EXISTS reviews (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

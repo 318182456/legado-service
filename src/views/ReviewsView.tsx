@@ -599,7 +599,7 @@ export default function ReviewsView() {
           <h3 className="font-semibold text-on-surface">诊断</h3>
           <p className="text-xs text-secondary mt-1">
             段评不出现时用这里排查。填 App 里显示的书名和章节标题，会同步跑一遍完整链路并逐步汇报。
-            带上 bookUrl 与书源地址才能测到抓正文那几步。
+            书籍链接留空时会自动反查：先查本服务的请求记录，再查 reader 书架，都找不到才需要手工填。
           </p>
         </div>
         <div className="p-6 space-y-4">
@@ -631,7 +631,7 @@ export default function ReviewsView() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="书籍链接 bookUrl（选填）">
+            <Field label="书籍链接 bookUrl（留空则自动反查）">
               <input
                 value={diagBookUrl}
                 onChange={(e) => setDiagBookUrl(e.target.value)}
@@ -639,7 +639,7 @@ export default function ReviewsView() {
                 className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono"
               />
             </Field>
-            <Field label="书源地址 origin（选填）">
+            <Field label="书源地址 origin（留空则自动反查）">
               <input
                 value={diagOrigin}
                 onChange={(e) => setDiagOrigin(e.target.value)}
@@ -672,11 +672,23 @@ export default function ReviewsView() {
             <div className="border border-outline-variant rounded-lg divide-y divide-outline-variant text-xs">
               {diagSteps.map((s, i) => (
                 <div key={i} className="px-4 py-2.5 flex items-start gap-3">
-                  <span className={s.ok ? 'text-primary shrink-0' : 'text-error shrink-0'}>
-                    {s.ok ? '✓' : '✗'}
+                  <span
+                    className={`shrink-0 ${
+                      s.status === 'fail'
+                        ? 'text-error'
+                        : s.status === 'skip'
+                          ? 'text-outline'
+                          : 'text-primary'
+                    }`}
+                  >
+                    {s.status === 'fail' ? '✗' : s.status === 'skip' ? '—' : '✓'}
                   </span>
                   <span className="font-medium shrink-0 w-24">{s.name}</span>
-                  <span className={`min-w-0 wrap-break-word ${s.ok ? 'text-secondary' : 'text-error'}`}>
+                  <span
+                    className={`min-w-0 wrap-break-word ${
+                      s.status === 'fail' ? 'text-error' : 'text-secondary'
+                    }`}
+                  >
                     {s.detail}
                   </span>
                 </div>

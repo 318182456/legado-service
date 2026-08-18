@@ -66,6 +66,28 @@ export async function readerPost(
   }
 }
 
+/** 取 reader 书架列表，用于反查 bookUrl 与书源地址 */
+export async function readerGetBookshelf(
+  readerUrl: string,
+  accessToken?: string
+): Promise<any[]> {
+  const base = readerUrl.replace(/\/+$/, "");
+  const url = `${base}/reader3/getBookshelf${accessToken ? `?accessToken=${encodeURIComponent(accessToken)}` : ""}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`reader HTTP ${res.status}`);
+    const data = (await res.json()) as any;
+    if (data?.isSuccess === false) throw new Error(`reader: ${data?.errorMsg ?? "未知错误"}`);
+    const list = data?.data ?? data;
+    return Array.isArray(list) ? list : [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 按书源 URL 从订阅库里取出完整书源 JSON */
 export async function findBookSource(env: Env, originUrl: string): Promise<Record<string, unknown> | null> {
   const row = (await env.DB.prepare(

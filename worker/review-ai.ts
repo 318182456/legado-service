@@ -74,7 +74,8 @@ export async function loadAiConfig(env: Env): Promise<AiConfig> {
   const density = Number(cfg["review_density"] || "6");
 
   return {
-    provider: cfg["review_ai_provider"] || "gemini",
+    // auto 时按 base URL 形态自动判断，见 detectProvider
+    provider: cfg["review_ai_provider"] || "auto",
     apiKey: cfg["gemini_api_key"] || "",
     model: cfg["gemini_model"] || DEFAULT_MODEL,
     baseUrl: (cfg["gemini_base_url"] || DEFAULT_BASE_URL).replace(/\/+$/, ""),
@@ -235,13 +236,92 @@ function normalizeDrafts(raw: unknown, paraCount: number): ReviewDraft[] {
   return out;
 }
 
+// ─── OpenAI 兼容 ──────────────────────────────────────────────────
+
+/**
+ * 大量中转与自建代理只提供 OpenAI 兼容端点（/v1/chat/completions），
+ * 用原生 Gemini 的 /v1beta/models/x:generateContent 打过去必然 404。
+ * base URL 以 /v1 结尾时基本就是这种，见 detectProvider。
+ */
+class OpenAiCompatibleGenerator implements ReviewGenerator {
+  readonly name = "openai-compatible";
+
+  constructor(private cfg: AiConfig) {}
+
+  async generate(input: GenerateInput): Promise<ReviewDraft[]> {
+    const url = `${this.cfg.baseUrl}/chat/completions`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.cfg.model,
+        temperature: 1.0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              '只输出 JSON，形如 {"reviews":[{"paraIndex":1,"author":"网名","content":"评论",' +
+              '"replies":[{"author":"网名","content":"回复"}]}]}，不要加解释或代码块围栏。',
+          },
+          { role: "user", content: buildPrompt(input, this.cfg.maxParaChars) },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`模型接口 HTTP ${res.status}: ${detail.slice(0, 300)}`);
+    }
+
+    const data = (await res.json()) as any;
+    const text = data?.choices?.[0]?.message?.content ?? "";
+    if (!String(text).trim()) {
+      throw new Error(`模型未返回内容：${data?.choices?.[0]?.finish_reason ?? "空响应"}`);
+    }
+
+    let parsed: any;
+    try {
+      // 有些服务无视 response_format，仍会套 ```json 围栏
+      parsed = JSON.parse(String(text).replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
+    } catch {
+      throw new Error(`模型返回的不是合法 JSON：${String(text).slice(0, 200)}`);
+    }
+
+    return normalizeDrafts(parsed?.reviews, input.paragraphs.length);
+  }
+}
+
 // ─── 工厂 ─────────────────────────────────────────────────────────
 
+/**
+ * provider 配成 auto（默认）时按 base URL 猜：
+ * 以 /v1 结尾的是 OpenAI 兼容端点，其余按原生 Gemini 处理。
+ */
+export function detectProvider(cfg: AiConfig): string {
+  if (cfg.provider && cfg.provider !== "auto") return cfg.provider;
+  return /\/v1$/.test(cfg.baseUrl) ? "openai-compatible" : "gemini";
+}
+
+/** 最终会请求的完整地址，诊断时展示出来便于核对 */
+export function describeEndpoint(cfg: AiConfig): string {
+  return detectProvider(cfg) === "openai-compatible"
+    ? `${cfg.baseUrl}/chat/completions`
+    : `${cfg.baseUrl}/v1beta/models/${cfg.model}:generateContent`;
+}
+
 export function createGenerator(cfg: AiConfig): ReviewGenerator {
-  switch (cfg.provider) {
+  if (!cfg.apiKey) throw new Error("未配置模型 API Key");
+
+  switch (detectProvider(cfg)) {
     case "gemini":
-      if (!cfg.apiKey) throw new Error("未配置 Gemini API Key");
       return new GeminiGenerator(cfg);
+    case "openai-compatible":
+      return new OpenAiCompatibleGenerator(cfg);
     default:
       throw new Error(`未知的段评生成器：${cfg.provider}`);
   }
