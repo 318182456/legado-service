@@ -319,6 +319,18 @@ export interface DiagStep {
   detail: string;
 }
 
+export interface ShelfBook {
+  name: string;
+  author: string;
+  bookUrl: string;
+  origin: string;
+  originName: string;
+  durChapterTitle: string;
+}
+
+export const getReaderShelf = () =>
+  apiFetch<{ readerUrl: string; total: number; books: ShelfBook[] }>("/api/reviews/shelf");
+
 export const diagnoseReview = (data: {
   bookName: string;
   author?: string;

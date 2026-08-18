@@ -249,10 +249,17 @@ async function rememberChapterLocation(
  * 2. 同一本书的其它章节有记录 → 复用它的 bookUrl
  * 3. reader 书架上有这本书 → 按书名作者匹配
  */
+interface BookLocation {
+  bookUrl?: string;
+  originUrl?: string;
+  from?: string;
+  failReason?: string;
+}
+
 async function resolveBookLocation(
   env: Env,
   opts: { bookKey: string; chapterKey: string; bookName: string; author: string }
-): Promise<{ bookUrl: string; originUrl: string; from: string } | null> {
+): Promise<BookLocation> {
   const exact = (await env.DB.prepare(
     `SELECT book_url, origin_url FROM review_chapters
       WHERE book_key = ? AND chapter_key = ? AND book_url IS NOT NULL AND origin_url IS NOT NULL`
@@ -275,24 +282,86 @@ async function resolveBookLocation(
   }
 
   // 最后试 reader 书架
-  try {
-    const readerCfg = await resolveReaderConfig(env);
-    if (!readerCfg) return null;
-    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
-    const wantName = normalizeTitle(opts.bookName);
-    const wantAuthor = normalizeTitle(opts.author);
-    const hit = shelf.find((b: any) => {
-      if (normalizeTitle(b?.name ?? "") !== wantName) return false;
-      return !wantAuthor || normalizeTitle(b?.author ?? "") === wantAuthor;
-    });
-    if (hit?.bookUrl && hit?.origin) {
-      return { bookUrl: hit.bookUrl, originUrl: hit.origin, from: "reader 书架" };
-    }
-  } catch {
-    // 书架取不到就算了，让诊断提示手工填
+  const readerCfg = await resolveReaderConfig(env);
+  if (!readerCfg) {
+    return { failReason: "自动抓取已关闭或 reader 地址为空，无法查书架" };
   }
 
-  return null;
+  try {
+    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
+    console.log(`[段评] 为《${opts.bookName}》查 reader 书架，返回 ${shelf.length} 本书`);
+
+    if (!shelf.length) {
+      return {
+        failReason:
+          "reader 书架返回 0 本书。若你在网页上能看到书架，多半是 reader 开了多用户，" +
+          "需要在配置里填 reader accessToken",
+      };
+    }
+
+    const wantName = normalizeTitle(opts.bookName);
+    const wantAuthor = normalizeTitle(opts.author);
+
+    // 先按书名+作者，再退一步只按书名
+    let hit = shelf.find(
+      (b: any) =>
+        normalizeTitle(b?.name ?? "") === wantName &&
+        (!wantAuthor || normalizeTitle(b?.author ?? "") === wantAuthor)
+    );
+    let how = "书名+作者";
+    if (!hit) {
+      hit = shelf.find((b: any) => normalizeTitle(b?.name ?? "") === wantName);
+      how = "仅书名";
+    }
+
+    if (!hit) {
+      const names = shelf.slice(0, 8).map((b: any) => b?.name).filter(Boolean).join("、");
+      return {
+        failReason: `reader 书架共 ${shelf.length} 本，其中没有《${opts.bookName}》。书架样例：${names}`,
+      };
+    }
+    if (!hit.bookUrl || !hit.origin) {
+      return {
+        failReason: `书架里找到《${opts.bookName}》，但缺少 ${
+          !hit.bookUrl ? "bookUrl" : "origin"
+        }（可能是本地书）`,
+      };
+    }
+
+    return { bookUrl: hit.bookUrl, originUrl: hit.origin, from: `reader 书架（${how}匹配）` };
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error(`[段评] 为《${opts.bookName}》查 reader 书架失败：${msg}`);
+    return { failReason: `查 reader 书架失败：${msg}` };
+  }
+}
+
+/** 列出 reader 书架，供诊断界面点选书籍 */
+export async function handleListReaderShelf(env: Env): Promise<Response> {
+  const readerCfg = await resolveReaderConfig(env);
+  if (!readerCfg) {
+    return err("自动抓取已关闭或 reader 地址为空", 400);
+  }
+
+  try {
+    const shelf = await readerGetBookshelf(readerCfg.readerUrl, readerCfg.accessToken);
+    return ok({
+      readerUrl: readerCfg.readerUrl,
+      total: shelf.length,
+      books: shelf
+        .map((b: any) => ({
+          name: String(b?.name ?? ""),
+          author: String(b?.author ?? ""),
+          bookUrl: String(b?.bookUrl ?? ""),
+          origin: String(b?.origin ?? ""),
+          originName: String(b?.originName ?? ""),
+          durChapterTitle: String(b?.durChapterTitle ?? ""),
+        }))
+        .filter((b: any) => b.name),
+    });
+  } catch (e) {
+    return err(`查 reader 书架失败：${(e as Error).message}`, 502);
+  }
 }
 
 /**
@@ -1075,10 +1144,13 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
 
   if (!bookName || !chapterTitle) return err("书名和章节标题不能为空");
 
+  const tag = `《${bookName}》${author ? `(${author})` : ""} - ${chapterTitle}`;
+  console.log(`[段评诊断] ===== 开始诊断 ${tag} =====`);
+
   const steps: DiagStep[] = [];
   const push = (name: string, status: DiagStatus, detail: string) => {
     steps.push({ name, status, ok: status !== "fail", detail });
-    console.log(`[段评诊断] ${status.toUpperCase().padEnd(4)} ${name}: ${detail}`);
+    console.log(`[段评诊断] ${status.toUpperCase().padEnd(4)} ${tag} | ${name}: ${detail}`);
   };
 
   const bookKey = await bookKeyOf(bookName, author);
@@ -1137,7 +1209,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
 
   if (!bookUrl || !originUrl) {
     const found = await resolveBookLocation(env, { bookKey, chapterKey, bookName, author });
-    if (found) {
+    if (found.bookUrl && found.originUrl) {
       bookUrl = found.bookUrl;
       originUrl = found.originUrl;
       push("反查书籍链接", "ok", `取自${found.from}：${bookUrl}`);
@@ -1145,8 +1217,8 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
       push(
         "反查书籍链接",
         "skip",
-        "库里还没有这本书的 bookUrl，reader 书架上也没找到。" +
-          "让 App 用新注入的书源打开一次本章即可自动记下；或手工填入后重试"
+        (found.failReason ?? "库里还没有这本书的 bookUrl，reader 书架上也没找到") +
+          "。可在下方从 reader 书架点选，或让 App 用新注入的书源打开一次本章自动记下"
       );
       return ok({ steps, canGenerate: false });
     }

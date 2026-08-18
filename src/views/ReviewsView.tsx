@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope } from 'lucide-react';
+import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library } from 'lucide-react';
 import * as api from '../api';
 
 export default function ReviewsView() {
@@ -35,6 +35,8 @@ export default function ReviewsView() {
   const [diagOrigin, setDiagOrigin] = useState('');
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagSteps, setDiagSteps] = useState<api.DiagStep[]>([]);
+  const [shelf, setShelf] = useState<api.ShelfBook[] | null>(null);
+  const [shelfLoading, setShelfLoading] = useState(false);
 
   // 批注表单
   const [bookName, setBookName] = useState('');
@@ -182,6 +184,36 @@ export default function ReviewsView() {
     } finally {
       setInjecting(false);
     }
+  };
+
+  const handleLoadShelf = async () => {
+    setShelfLoading(true);
+    try {
+      const r = await api.getReaderShelf();
+      setShelf(r.books);
+      if (!r.books.length) {
+        alert(
+          `reader（${r.readerUrl}）书架返回 0 本书。
+
+` +
+            '若你在网页上能看到书架，说明 reader 开了多用户，需要在生成配置里填 reader accessToken。'
+        );
+      }
+    } catch (e) {
+      alert('读取书架失败: ' + String(e));
+    } finally {
+      setShelfLoading(false);
+    }
+  };
+
+  const pickShelfBook = (b: api.ShelfBook) => {
+    setDiagBook(b.name);
+    setDiagAuthor(b.author);
+    setDiagBookUrl(b.bookUrl);
+    setDiagOrigin(b.origin);
+    // 书架记着阅读进度，正好是最可能想诊断的那一章
+    if (b.durChapterTitle) setDiagChapter(b.durChapterTitle);
+    setShelf(null);
   };
 
   const handleDiagnose = async (generate: boolean) => {
@@ -651,6 +683,14 @@ export default function ReviewsView() {
 
           <div className="flex flex-wrap gap-2">
             <button
+              onClick={handleLoadShelf}
+              disabled={shelfLoading}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-outline-variant hover:bg-surface-container-low disabled:opacity-50"
+            >
+              <Library size={16} />
+              {shelfLoading ? '读取中...' : '从 reader 书架选'}
+            </button>
+            <button
               onClick={() => handleDiagnose(false)}
               disabled={diagnosing}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-outline-variant hover:bg-surface-container-low disabled:opacity-50"
@@ -667,6 +707,26 @@ export default function ReviewsView() {
               {diagnosing ? '执行中...' : '诊断并立即生成本章'}
             </button>
           </div>
+
+          {shelf && shelf.length > 0 && (
+            <div className="border border-outline-variant rounded-lg max-h-64 overflow-y-auto divide-y divide-outline-variant">
+              {shelf.map((b, i) => (
+                <button
+                  key={i}
+                  onClick={() => pickShelfBook(b)}
+                  className="w-full text-left px-4 py-2.5 hover:bg-surface-container-low transition-colors"
+                >
+                  <p className="text-sm font-medium truncate">
+                    {b.name}
+                    <span className="text-xs text-secondary ml-2">{b.author}</span>
+                  </p>
+                  <p className="text-xs text-secondary truncate mt-0.5">
+                    {b.durChapterTitle || '（无进度）'} · {b.originName || b.origin}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
 
           {diagSteps.length > 0 && (
             <div className="border border-outline-variant rounded-lg divide-y divide-outline-variant text-xs">
