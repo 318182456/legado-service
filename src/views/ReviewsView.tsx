@@ -2,6 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck } from 'lucide-react';
 import * as api from '../api';
 
+/** 按章节聚合，章节内按段号排序；缺少章节记录的归到「未知章节」 */
+function groupByChapter(list: api.ReviewItem[]): [string, api.ReviewItem[]][] {
+  const map = new Map<string, api.ReviewItem[]>();
+  for (const r of list) {
+    const key = r.chapter_title?.trim() || '未知章节';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(r);
+  }
+  for (const items of map.values()) {
+    items.sort((a, b) => a.para_index - b.para_index || a.id - b.id);
+  }
+  return [...map.entries()];
+}
+
 export default function ReviewsView() {
   const [config, setConfig] = useState<api.ReviewConfig | null>(null);
   const [books, setBooks] = useState<api.ReviewBook[]>([]);
@@ -657,31 +671,39 @@ export default function ReviewsView() {
             ) : reviews.length === 0 ? (
               <p className="p-5 text-sm text-secondary text-center">这本书还没有评论。</p>
             ) : (
-              reviews.map((r) => (
-                <div key={r.id} className="px-5 py-3 flex items-start gap-3">
-                  <span
-                    className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${
-                      r.origin === 'ai'
-                        ? 'bg-primary/10 text-primary'
-                        : 'bg-tertiary/10 text-tertiary'
-                    }`}
-                  >
-                    {r.origin === 'ai' ? 'AI' : '我'}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-secondary">
-                      {r.author} · 第 {r.para_index === -1 ? '标题' : r.para_index} 段
-                      {r.reply_to && <span> · 回复 #{r.reply_to}</span>}
-                    </p>
-                    <p className="text-sm mt-1 wrap-break-word">{r.content}</p>
+              groupByChapter(reviews).map(([title, items]) => (
+                <div key={title}>
+                  <div className="px-5 py-2 bg-surface-container-low sticky top-0 flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium truncate">{title}</p>
+                    <span className="text-xs text-secondary shrink-0">{items.length} 条</span>
                   </div>
-                  <button
-                    onClick={() => handleDelete(r.id)}
-                    className="shrink-0 text-outline hover:text-error transition-colors"
-                    title="删除"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {items.map((r) => (
+                    <div key={r.id} className="px-5 py-3 flex items-start gap-3 border-t border-outline-variant">
+                      <span
+                        className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${
+                          r.origin === 'ai'
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-tertiary/10 text-tertiary'
+                        }`}
+                      >
+                        {r.origin === 'ai' ? 'AI' : '我'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-secondary">
+                          {r.author} · 第 {r.para_index === -1 ? '标题' : r.para_index} 段
+                          {r.reply_to && <span> · 回复 #{r.reply_to}</span>}
+                        </p>
+                        <p className="text-sm mt-1 wrap-break-word">{r.content}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDelete(r.id)}
+                        className="shrink-0 text-outline hover:text-error transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               ))
             )}

@@ -889,12 +889,18 @@ export async function handleListReviews(env: Env, url: URL): Promise<Response> {
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
+  // 带上章节标题与序号：整本书的段评混在一起时，光有「第 N 段」无法区分是哪一章
   const [countRow, rows] = await Promise.all([
-    env.DB.prepare(`SELECT COUNT(*) AS cnt FROM reviews ${clause}`)
+    env.DB.prepare(`SELECT COUNT(*) AS cnt FROM reviews r ${clause.replace(/book_key/g, "r.book_key").replace(/chapter_key/g, "r.chapter_key")}`)
       .bind(...params)
       .first() as Promise<any>,
     env.DB.prepare(
-      `SELECT * FROM reviews ${clause} ORDER BY para_index, id LIMIT ? OFFSET ?`
+      `SELECT r.*, c.chapter_title, c.book_url
+         FROM reviews r
+         LEFT JOIN review_chapters c
+           ON c.book_key = r.book_key AND c.chapter_key = r.chapter_key
+        ${clause.replace(/book_key/g, "r.book_key").replace(/chapter_key/g, "r.chapter_key")}
+        ORDER BY c.chapter_title, r.para_index, r.id LIMIT ? OFFSET ?`
     )
       .bind(...params, limit, offset)
       .all(),

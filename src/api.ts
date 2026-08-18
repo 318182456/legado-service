@@ -260,6 +260,9 @@ export interface ReviewItem {
   origin: "ai" | "human";
   like_count: number;
   created_at: string;
+  /** 由 review_chapters 联表带出，用于按章节分组 */
+  chapter_title?: string | null;
+  book_url?: string | null;
 }
 
 export interface ReviewBook {
