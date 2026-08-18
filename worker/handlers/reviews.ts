@@ -33,6 +33,8 @@ import {
   readerGetBookshelf,
   isReaderAuthError,
   clearReaderToken,
+  matchChapter,
+  extractChapterNumber,
 } from "../reader-content";
 
 const DETAIL_PAGE_SIZE = 20;
@@ -1278,25 +1280,26 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
     return ok({ steps, canGenerate: false });
   }
 
-  const wanted = normalizeTitle(chapterTitle);
-  let index = toc.findIndex((c) => normalizeTitle(c?.title ?? "") === wanted);
-  let how = "精确匹配";
-  if (index < 0) {
-    index = toc.findIndex((c) => {
-      const t = normalizeTitle(c?.title ?? "");
-      return t.length > 0 && (t.includes(wanted) || wanted.includes(t));
-    });
-    how = "包含匹配";
-  }
-  if (index < 0) {
+  const matched = matchChapter(toc, chapterTitle);
+  if (!matched) {
+    const wantNum = extractChapterNumber(chapterTitle);
+    // 序号能解析出来的话，把目录里那个位置的标题摆出来供人工核对
+    const nearby =
+      wantNum !== null && wantNum >= 1 && wantNum <= toc.length
+        ? `。目录第 ${wantNum} 项是「${toc[wantNum - 1]?.title}」——若这就是你要的章节，说明两边编号方式不同`
+        : "";
     push(
       "定位章节",
       "fail",
-      `目录里找不到「${chapterTitle}」。目录标题样例：${toc.slice(0, 5).map((c) => c?.title).join(" / ")}`
+      `目录里找不到「${chapterTitle}」${nearby}。目录标题样例：${toc
+        .slice(0, 5)
+        .map((c) => c?.title)
+        .join(" / ")}`
     );
     return ok({ steps, canGenerate: false });
   }
-  push("定位章节", "ok", `${how} → index=${index}，目录标题「${toc[index]?.title}」`);
+  const index = matched.index;
+  push("定位章节", "ok", `${matched.how} → index=${index}，目录标题「${toc[index]?.title}」`);
 
   let paragraphs: string[];
   try {

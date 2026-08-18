@@ -35,6 +35,131 @@ export function normalizeTitle(text: string): string {
     .toLowerCase();
 }
 
+// ─── 章节标题匹配 ─────────────────────────────────────────────────
+
+const CN_DIGITS: Record<string, number> = {
+  零: 0, 〇: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+  壹: 1, 贰: 2, 叁: 3, 肆: 4, 伍: 5, 陆: 6, 柒: 7, 捌: 8, 玖: 9, 两: 2,
+};
+
+const CN_UNITS: Record<string, number> = { 十: 10, 拾: 10, 百: 100, 佰: 100, 千: 1000, 仟: 1000, 万: 10000, 亿: 100000000 };
+
+const CN_NUM_CHARS = Object.keys(CN_DIGITS).concat(Object.keys(CN_UNITS)).join("");
+
+/** 「五百七十九」→ 579。解析不出返回 null */
+export function cnToNumber(text: string): number | null {
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return Number(text);
+
+  let total = 0;
+  let section = 0;
+  let num = 0;
+  let seen = false;
+
+  for (const ch of text) {
+    if (ch in CN_DIGITS) {
+      num = CN_DIGITS[ch];
+      seen = true;
+    } else if (ch in CN_UNITS) {
+      const unit = CN_UNITS[ch];
+      seen = true;
+      if (unit >= 10000) {
+        section = (section + num) * unit;
+        total += section;
+        section = 0;
+      } else {
+        // 「十九」这种省略了前导一
+        section += (num || 1) * unit;
+      }
+      num = 0;
+    } else {
+      return null;
+    }
+  }
+
+  return seen ? total + section + num : null;
+}
+
+/**
+ * 从章节标题里取出序号，中文数字与阿拉伯数字都认。
+ * 小说站两种写法混用极常见，同一本书在 App 与 reader 里可能各用一种。
+ */
+export function extractChapterNumber(title: string): number | null {
+  const t = String(title ?? "");
+
+  const marked = t.match(new RegExp(`第\\s*([0-9]+|[${CN_NUM_CHARS}]+)\\s*[章节回话卷篇]`));
+  if (marked) return cnToNumber(marked[1]);
+
+  const leading = t.match(/^\s*(\d{1,6})\s*[.、,，:：\s]/);
+  if (leading) return Number(leading[1]);
+
+  return null;
+}
+
+/** 去掉「第N章」前缀后的标题正文，用于跨编号写法比对 */
+export function chapterTitleBody(title: string): string {
+  const stripped = String(title ?? "").replace(
+    new RegExp(`^\\s*第\\s*(?:[0-9]+|[${CN_NUM_CHARS}]+)\\s*[章节回话卷篇]\\s*[:：、.]?\\s*`),
+    ""
+  );
+  return normalizeTitle(stripped);
+}
+
+export interface ChapterMatch {
+  index: number;
+  how: string;
+}
+
+/**
+ * 在目录里定位章节。按可靠度从高到低尝试，任一命中即返回。
+ * 宁可返回 null 也不能瞎猜——钉错段落比没有段评更糟。
+ */
+export function matchChapter(toc: { title?: string }[], wantTitle: string): ChapterMatch | null {
+  const wantFull = normalizeTitle(wantTitle);
+  const wantNum = extractChapterNumber(wantTitle);
+  const wantBody = chapterTitleBody(wantTitle);
+
+  const exact = toc.findIndex((c) => normalizeTitle(c?.title ?? "") === wantFull);
+  if (exact >= 0) return { index: exact, how: "标题完全一致" };
+
+  // 序号与正文同时对上，最可信
+  if (wantNum !== null && wantBody) {
+    const both = toc.findIndex(
+      (c) =>
+        extractChapterNumber(c?.title ?? "") === wantNum &&
+        chapterTitleBody(c?.title ?? "") === wantBody
+    );
+    if (both >= 0) return { index: both, how: `序号 ${wantNum} 与标题正文均一致` };
+  }
+
+  // 正文足够长时单凭正文也够独特
+  if (wantBody.length >= 3) {
+    const hits = toc
+      .map((c, i) => ({ i, body: chapterTitleBody(c?.title ?? "") }))
+      .filter((x) => x.body === wantBody);
+    if (hits.length === 1) return { index: hits[0].i, how: "标题正文一致（忽略编号写法）" };
+  }
+
+  // 只剩序号可用，且该序号在目录里唯一
+  if (wantNum !== null) {
+    const hits = toc
+      .map((c, i) => ({ i, n: extractChapterNumber(c?.title ?? "") }))
+      .filter((x) => x.n === wantNum);
+    if (hits.length === 1) return { index: hits[0].i, how: `章节序号 ${wantNum} 唯一匹配` };
+  }
+
+  // 最后退到包含匹配，要求长度足够避免误伤
+  if (wantFull.length >= 4) {
+    const loose = toc.findIndex((c) => {
+      const t = normalizeTitle(c?.title ?? "");
+      return t.length >= 4 && (t.includes(wantFull) || wantFull.includes(t));
+    });
+    if (loose >= 0) return { index: loose, how: "包含匹配" };
+  }
+
+  return null;
+}
+
 export async function readerPost(
   readerUrl: string,
   path: string,
@@ -148,16 +273,10 @@ export async function fetchParagraphsViaReader(
 
   const toc = await loadToc(env, opts.readerUrl, opts.bookUrl, bookSource, opts.accessToken);
 
-  const wanted = normalizeTitle(opts.chapterTitle);
-  let index = toc.findIndex((c) => normalizeTitle(c?.title ?? "") === wanted);
-  // 标题里带卷名或多余空格时退一步做包含匹配
-  if (index < 0) {
-    index = toc.findIndex((c) => {
-      const t = normalizeTitle(c?.title ?? "");
-      return t.length > 0 && (t.includes(wanted) || wanted.includes(t));
-    });
-  }
-  if (index < 0) throw new Error(`目录里找不到章节「${opts.chapterTitle}」`);
+  const matched = matchChapter(toc, opts.chapterTitle);
+  if (!matched) throw new Error(`目录里找不到章节「${opts.chapterTitle}」`);
+  const index = matched.index;
+  console.log(`[段评] 章节定位：${matched.how} → index=${index}「${toc[index]?.title}」`);
 
   const content = await readerPost(
     opts.readerUrl,
