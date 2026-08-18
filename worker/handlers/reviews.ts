@@ -660,10 +660,12 @@ function buildReviewRule(origin: string, token: string) {
   const t = token ? `&token=${encodeURIComponent(token)}` : "";
   return {
     enabled: true,
+    // AnalyzeUrl.evalJS 的作用域里只有 book/page/java/source，没有 chapter，
+    // 章节标题必须走 java.get("title")，写 chapter.title 会直接抛异常
     reviewSummaryUrl:
       `${origin}/review/summary?book={{encodeURIComponent(book.name)}}` +
       `&author={{encodeURIComponent(book.author)}}` +
-      `&chapter={{encodeURIComponent(chapter.title)}}${t}`,
+      `&chapter={{encodeURIComponent(java.get("title"))}}${t}`,
     summaryListRule: "$.list",
     summaryParagraphIndexRule: "$.paraIndex",
     summaryCountRule: "$.count",

@@ -21,7 +21,9 @@
  * 一旦非空，搜索、目录、正文全部改走 JS 函数，整个书源就废了。规则书源只能用下面的字段。
  *
  * 在书源编辑页「段评」标签页勾选启用，然后填（URL 里的变量要自己编码）：
- *   reviewSummaryUrl           https://你的域名/review/summary?book={{encodeURIComponent(book.name)}}&author={{encodeURIComponent(book.author)}}&chapter={{encodeURIComponent(chapter.title)}}&token=你的令牌
+ *   注意 AnalyzeUrl 的 JS 作用域里只有 book / page / java / source，没有 chapter，
+ *   章节标题只能用 java.get("title") 取，写成 chapter.title 会抛异常导致段评静默失败。
+ *   reviewSummaryUrl           https://你的域名/review/summary?book={{encodeURIComponent(book.name)}}&author={{encodeURIComponent(book.author)}}&chapter={{encodeURIComponent(java.get("title"))}}&token=你的令牌
  *   summaryListRule            $.list
  *   summaryParagraphIndexRule  $.paraIndex
  *   summaryCountRule           $.count
