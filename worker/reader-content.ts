@@ -28,14 +28,14 @@ interface ReaderChapter {
 }
 
 /** 与段评定位保持一致的标题归一化，用于在目录里找对应章节 */
-function normalizeTitle(text: string): string {
+export function normalizeTitle(text: string): string {
   return String(text ?? "")
     .replace(/[\s　]+/g, "")
     .replace(/[《》「」『』()（）【】\[\]]/g, "")
     .toLowerCase();
 }
 
-async function readerPost(
+export async function readerPost(
   readerUrl: string,
   path: string,
   payload: Record<string, unknown>,
@@ -67,7 +67,7 @@ async function readerPost(
 }
 
 /** 按书源 URL 从订阅库里取出完整书源 JSON */
-async function findBookSource(env: Env, originUrl: string): Promise<Record<string, unknown> | null> {
+export async function findBookSource(env: Env, originUrl: string): Promise<Record<string, unknown> | null> {
   const row = (await env.DB.prepare(
     `SELECT raw_json FROM sources WHERE book_source_url = ? ORDER BY enabled DESC, id LIMIT 1`
   )
@@ -82,7 +82,7 @@ async function findBookSource(env: Env, originUrl: string): Promise<Record<strin
   }
 }
 
-async function loadToc(
+export async function loadToc(
   env: Env,
   readerUrl: string,
   bookUrl: string,

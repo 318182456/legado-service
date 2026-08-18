@@ -220,6 +220,7 @@ export default {
       if (path === "/api/reviews/js-source" && method === "GET") return reviews.handleReviewJsSourceTemplate(request, env);
       if (path === "/api/reviews/clear-ai" && method === "POST") return reviews.handleClearAiReviews(request, env);
       if (path === "/api/reviews/inject" && method === "POST") return reviews.handleInjectReviewRule(request, env);
+      if (path === "/api/reviews/diagnose" && method === "POST") return reviews.handleDiagnoseReview(request, env);
 
       const reviewMatch = path.match(/^\/api\/reviews\/(\d+)$/);
       if (reviewMatch && method === "DELETE") {

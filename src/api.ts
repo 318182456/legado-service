@@ -312,6 +312,25 @@ export const addReview = (data: {
 export const deleteReview = (id: number) =>
   apiFetch<any>(`/api/reviews/${id}`, { method: "DELETE" });
 
+export interface DiagStep {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export const diagnoseReview = (data: {
+  bookName: string;
+  author?: string;
+  chapterTitle: string;
+  bookUrl?: string;
+  origin?: string;
+  generate?: boolean;
+}) =>
+  apiFetch<{ steps: DiagStep[]; canGenerate: boolean }>("/api/reviews/diagnose", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
 export const getReviewMixin = () =>
   apiFetch<{ script: string }>("/api/reviews/mixin");
 

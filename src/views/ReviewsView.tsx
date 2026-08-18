@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2 } from 'lucide-react';
+import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope } from 'lucide-react';
 import * as api from '../api';
 
 export default function ReviewsView() {
@@ -26,6 +26,15 @@ export default function ReviewsView() {
   const [markName, setMarkName] = useState(true);
   const [mark, setMark] = useState('💬');
   const [injectResult, setInjectResult] = useState<api.InjectResult | null>(null);
+
+  // 诊断
+  const [diagBook, setDiagBook] = useState('');
+  const [diagAuthor, setDiagAuthor] = useState('');
+  const [diagChapter, setDiagChapter] = useState('');
+  const [diagBookUrl, setDiagBookUrl] = useState('');
+  const [diagOrigin, setDiagOrigin] = useState('');
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagSteps, setDiagSteps] = useState<api.DiagStep[]>([]);
 
   // 批注表单
   const [bookName, setBookName] = useState('');
@@ -172,6 +181,31 @@ export default function ReviewsView() {
       alert('操作失败: ' + String(e));
     } finally {
       setInjecting(false);
+    }
+  };
+
+  const handleDiagnose = async (generate: boolean) => {
+    if (!diagBook.trim() || !diagChapter.trim()) {
+      alert('书名和章节标题不能为空');
+      return;
+    }
+    setDiagnosing(true);
+    setDiagSteps([]);
+    try {
+      const r = await api.diagnoseReview({
+        bookName: diagBook.trim(),
+        author: diagAuthor.trim(),
+        chapterTitle: diagChapter.trim(),
+        bookUrl: diagBookUrl.trim(),
+        origin: diagOrigin.trim(),
+        generate,
+      });
+      setDiagSteps(r.steps);
+      if (generate) await fetchAll();
+    } catch (e) {
+      alert('诊断失败: ' + String(e));
+    } finally {
+      setDiagnosing(false);
     }
   };
 
@@ -559,6 +593,98 @@ export default function ReviewsView() {
           </div>
         </section>
       </div>
+
+      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+        <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
+          <h3 className="font-semibold text-on-surface">诊断</h3>
+          <p className="text-xs text-secondary mt-1">
+            段评不出现时用这里排查。填 App 里显示的书名和章节标题，会同步跑一遍完整链路并逐步汇报。
+            带上 bookUrl 与书源地址才能测到抓正文那几步。
+          </p>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Field label="书名">
+              <input
+                value={diagBook}
+                onChange={(e) => setDiagBook(e.target.value)}
+                placeholder="异度旅社"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+              />
+            </Field>
+            <Field label="作者">
+              <input
+                value={diagAuthor}
+                onChange={(e) => setDiagAuthor(e.target.value)}
+                placeholder="远瞳"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+              />
+            </Field>
+            <Field label="章节标题（与 App 显示一致）">
+              <input
+                value={diagChapter}
+                onChange={(e) => setDiagChapter(e.target.value)}
+                placeholder="第五百七十九章 边境的惊鸿一瞥"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="书籍链接 bookUrl（选填）">
+              <input
+                value={diagBookUrl}
+                onChange={(e) => setDiagBookUrl(e.target.value)}
+                placeholder="http://m.rulianshi.cc/xxx/"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono"
+              />
+            </Field>
+            <Field label="书源地址 origin（选填）">
+              <input
+                value={diagOrigin}
+                onChange={(e) => setDiagOrigin(e.target.value)}
+                placeholder="http://m.rulianshi.cc"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono"
+              />
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => handleDiagnose(false)}
+              disabled={diagnosing}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-outline-variant hover:bg-surface-container-low disabled:opacity-50"
+            >
+              <Stethoscope size={16} />
+              {diagnosing ? '诊断中...' : '只检查不生成'}
+            </button>
+            <button
+              onClick={() => handleDiagnose(true)}
+              disabled={diagnosing}
+              className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+            >
+              <Sparkles size={16} />
+              {diagnosing ? '执行中...' : '诊断并立即生成本章'}
+            </button>
+          </div>
+
+          {diagSteps.length > 0 && (
+            <div className="border border-outline-variant rounded-lg divide-y divide-outline-variant text-xs">
+              {diagSteps.map((s, i) => (
+                <div key={i} className="px-4 py-2.5 flex items-start gap-3">
+                  <span className={s.ok ? 'text-primary shrink-0' : 'text-error shrink-0'}>
+                    {s.ok ? '✓' : '✗'}
+                  </span>
+                  <span className="font-medium shrink-0 w-24">{s.name}</span>
+                  <span className={`min-w-0 wrap-break-word ${s.ok ? 'text-secondary' : 'text-error'}`}>
+                    {s.detail}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
 
       <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
