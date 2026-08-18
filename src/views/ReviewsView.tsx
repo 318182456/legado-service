@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library } from 'lucide-react';
+import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck } from 'lucide-react';
 import * as api from '../api';
 
 export default function ReviewsView() {
@@ -39,6 +39,7 @@ export default function ReviewsView() {
   const [diagSteps, setDiagSteps] = useState<api.DiagStep[]>([]);
   const [shelf, setShelf] = useState<api.ShelfBook[] | null>(null);
   const [shelfLoading, setShelfLoading] = useState(false);
+  const [srcStatus, setSrcStatus] = useState<api.SourceStatus[] | null>(null);
 
   // 批注表单
   const [bookName, setBookName] = useState('');
@@ -222,6 +223,21 @@ export default function ReviewsView() {
     // 书架记着阅读进度，正好是最可能想诊断的那一章
     if (b.durChapterTitle) setDiagChapter(b.durChapterTitle);
     setShelf(null);
+  };
+
+  const handleCheckSource = async () => {
+    const q = diagOrigin.trim() || diagBook.trim();
+    if (!q) {
+      alert('请先填书源地址，或填书名后从 reader 书架选一次');
+      return;
+    }
+    try {
+      const r = await api.checkSourceStatus(q, diagBook.trim(), diagChapter.trim(), diagAuthor.trim());
+      setSrcStatus(r.matches);
+      if (!r.matches.length) alert(`订阅库里没有匹配「${q}」的书源`);
+    } catch (e) {
+      alert('检查失败: ' + String(e));
+    }
   };
 
   const handleDiagnose = async (generate: boolean) => {
@@ -738,6 +754,13 @@ export default function ReviewsView() {
               {shelfLoading ? '读取中...' : '从 reader 书架选'}
             </button>
             <button
+              onClick={handleCheckSource}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-outline-variant hover:bg-surface-container-low"
+            >
+              <SearchCheck size={16} />
+              检查书源注入状态
+            </button>
+            <button
               onClick={() => handleDiagnose(false)}
               disabled={diagnosing}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-outline-variant hover:bg-surface-container-low disabled:opacity-50"
@@ -771,6 +794,48 @@ export default function ReviewsView() {
                     {b.durChapterTitle || '（无进度）'} · {b.originName || b.origin}
                   </p>
                 </button>
+              ))}
+            </div>
+          )}
+
+          {srcStatus && srcStatus.length > 0 && (
+            <div className="border border-outline-variant rounded-lg divide-y divide-outline-variant text-xs">
+              {srcStatus.map((m, i) => (
+                <div key={i} className="px-4 py-3 space-y-1">
+                  <p className="font-medium">
+                    <span className={m.usable ? 'text-primary' : 'text-error'}>
+                      {m.usable ? '✓' : '✗'}
+                    </span>{' '}
+                    {m.name}
+                    <span className="text-secondary font-normal ml-2">{m.bookSourceUrl}</span>
+                  </p>
+                  <p className="text-secondary">
+                    {m.broken
+                      ? '书源 JSON 已损坏'
+                      : m.isJsSource
+                        ? 'JS 书源 —— 段评走 mainJs 里的函数，ruleReview 对它无效'
+                        : !m.hasReviewRule
+                          ? '没有 ruleReview 字段，请点上方「注入全部规则书源」'
+                          : !m.reviewEnabled
+                            ? 'ruleReview 存在但 enabled 不为 true'
+                            : m.missingFields.length
+                              ? `缺少必填字段：${m.missingFields.join('、')}`
+                              : '服务端规则完整。App 若仍无图标，问题在 App 侧（版本或未重新导入书源）'}
+                  </p>
+                  {m.probeUrl && (
+                    <p className="break-all">
+                      <span className="text-secondary">浏览器自测：</span>
+                      <a
+                        href={m.probeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary hover:underline font-mono"
+                      >
+                        {m.probeUrl}
+                      </a>
+                    </p>
+                  )}
+                </div>
               ))}
             </div>
           )}

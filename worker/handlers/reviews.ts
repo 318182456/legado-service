@@ -365,6 +365,85 @@ async function withReaderRetry<T>(
   }
 }
 
+/**
+ * 检查某个书源在订阅输出里的段评规则状态。
+ * App 侧不发请求时用来做排除法：先确认服务端的数据本身没问题。
+ */
+export async function handleCheckSourceStatus(env: Env, url: URL): Promise<Response> {
+  const q = (url.searchParams.get("q") ?? "").trim();
+  if (!q) return err("请输入书源名或书源地址");
+
+  const rows = await env.DB.prepare(
+    `SELECT id, name, book_source_url, raw_json, enabled FROM sources
+      WHERE name LIKE ? OR book_source_url LIKE ? ORDER BY enabled DESC, id LIMIT 10`
+  )
+    .bind(`%${q}%`, `%${q}%`)
+    .all();
+
+  const bookName = (url.searchParams.get("book") ?? "示例书名").trim();
+  const chapterTitle = (url.searchParams.get("chapter") ?? "第一章").trim();
+  const author = (url.searchParams.get("author") ?? "").trim();
+
+  const tokenRow = (await env.DB.prepare(
+    `SELECT value FROM system_config WHERE key = 'review_token'`
+  ).first()) as any;
+  const token = String(tokenRow?.value ?? "").trim();
+  const origin = url.origin;
+
+  const matches = [];
+  for (const row of (rows.results ?? []) as any[]) {
+    let src: any = {};
+    try {
+      src = JSON.parse(row.raw_json);
+    } catch {
+      matches.push({ name: row.name, bookSourceUrl: row.book_source_url, broken: true });
+      continue;
+    }
+
+    const isJs = !!String(src.mainJs ?? "").trim();
+    const rr = src.ruleReview ?? null;
+
+    // 与 App 的 ReviewRule.configuredSummaryUrl() 保持一致的必填项
+    const required = [
+      "reviewSummaryUrl",
+      "summaryListRule",
+      "summaryParagraphIndexRule",
+      "summaryCountRule",
+    ];
+    const missing = rr ? required.filter((k) => !String(rr[k] ?? "").trim()) : required;
+    const usable = !isJs && !!rr && rr.enabled === true && missing.length === 0;
+
+    // 拼一条可以直接丢进浏览器验证的地址
+    let probeUrl = "";
+    if (usable) {
+      const params = new URLSearchParams({
+        book: bookName,
+        author,
+        chapter: chapterTitle,
+        bookUrl: "",
+        origin: row.book_source_url,
+      });
+      if (token) params.set("token", token);
+      probeUrl = `${origin}/review/summary?${params}`;
+    }
+
+    matches.push({
+      name: row.name,
+      bookSourceUrl: row.book_source_url,
+      enabled: row.enabled === 1,
+      isJsSource: isJs,
+      hasReviewRule: !!rr,
+      reviewEnabled: rr?.enabled === true,
+      missingFields: missing,
+      usable,
+      probeUrl,
+      summaryUrl: rr?.reviewSummaryUrl ?? "",
+    });
+  }
+
+  return ok({ query: q, total: matches.length, matches });
+}
+
 /** 列出 reader 书架，供诊断界面点选书籍 */
 export async function handleListReaderShelf(env: Env): Promise<Response> {
   const readerCfg = await resolveReaderConfig(env);

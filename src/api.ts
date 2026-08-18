@@ -330,6 +330,28 @@ export interface ShelfBook {
   durChapterTitle: string;
 }
 
+export interface SourceStatus {
+  name: string;
+  bookSourceUrl: string;
+  enabled: boolean;
+  isJsSource: boolean;
+  hasReviewRule: boolean;
+  reviewEnabled: boolean;
+  missingFields: string[];
+  usable: boolean;
+  probeUrl: string;
+  summaryUrl: string;
+  broken?: boolean;
+}
+
+export const checkSourceStatus = (q: string, book?: string, chapter?: string, author?: string) =>
+  apiFetch<{ query: string; total: number; matches: SourceStatus[] }>(
+    `/api/reviews/source-status?q=${encodeURIComponent(q)}` +
+      (book ? `&book=${encodeURIComponent(book)}` : "") +
+      (chapter ? `&chapter=${encodeURIComponent(chapter)}` : "") +
+      (author ? `&author=${encodeURIComponent(author)}` : "")
+  );
+
 export const getReaderShelf = () =>
   apiFetch<{ readerUrl: string; total: number; books: ShelfBook[] }>("/api/reviews/shelf");
 

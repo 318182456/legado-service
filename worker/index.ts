@@ -222,6 +222,7 @@ export default {
       if (path === "/api/reviews/inject" && method === "POST") return reviews.handleInjectReviewRule(request, env);
       if (path === "/api/reviews/diagnose" && method === "POST") return reviews.handleDiagnoseReview(request, env);
       if (path === "/api/reviews/shelf" && method === "GET") return reviews.handleListReaderShelf(env);
+      if (path === "/api/reviews/source-status" && method === "GET") return reviews.handleCheckSourceStatus(env, url);
 
       const reviewMatch = path.match(/^\/api\/reviews\/(\d+)$/);
       if (reviewMatch && method === "DELETE") {
