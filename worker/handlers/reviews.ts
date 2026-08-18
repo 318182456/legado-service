@@ -43,6 +43,12 @@ const REPLY_PAGE_SIZE = 20;
 const GENERATE_TIMEOUT_MS = 45_000;
 /** 内嵌回复的条数上限，超过则改由 getReviewReplies 分页拉取 */
 const INLINE_REPLY_LIMIT = 3;
+/**
+ * 首次请求时同步等待生成的时长。
+ * App 会缓存空结果且不再重试，等到就能当场返回，省去退出重进。
+ * 上限要留在 AnalyzeUrl 的请求超时之内，超了不如转后台。
+ */
+const SYNC_WAIT_MS = 20_000;
 
 // ─── 访问令牌 ─────────────────────────────────────────────────────
 
@@ -193,7 +199,7 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       originUrl,
     });
 
-    void autoGenerateViaReader(env, {
+    const task = {
       bookKey,
       chapterKey,
       bookName,
@@ -201,7 +207,31 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       chapterTitle,
       bookUrl,
       originUrl,
-    });
+    };
+
+    // App 会把空结果也写进 reviewSummaryCache，之后同一章不再请求，
+    // 非得退出书架重进才刷新。所以首次请求时同步等一会儿：
+    // 赶得上就直接带着数据返回，赶不上再退回后台继续。
+    if (!list.length) {
+      const done = await Promise.race([
+        autoGenerateViaReader(env, task).then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), SYNC_WAIT_MS)),
+      ]);
+      if (done) {
+        const fresh = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
+        console.log(
+          `[段评] 同步生成完成，本次响应直接带回 ${fresh.length} 段` +
+            `（《${bookName}》- ${chapterTitle}）`
+        );
+        return json({ list: fresh });
+      }
+      console.log(
+        `[段评] ${SYNC_WAIT_MS / 1000}s 内未生成完，转后台继续` +
+          `（《${bookName}》- ${chapterTitle}）`
+      );
+    } else {
+      void autoGenerateViaReader(env, task);
+    }
   }
 
   return json({ list });
@@ -816,7 +846,16 @@ export async function handleReviewReplies(env: Env, url: URL): Promise<Response>
   });
 }
 
-/** 组装成 App 认的结构：content 走对象协议，可带 time/likeCount/replyCount */
+/**
+ * 组装成 App 认的结构。
+ *
+ * content 必须是 JSON 字符串，不能是嵌套对象：
+ * 规则书源用 $.content 取值时走 safeRuleString，JsonPath 抽出对象后会被
+ * toString() 成 Kotlin Map 的 {text=…, time=…} 形式（等号、无引号），
+ * ReviewRuleParser.parseContentProtocol 用 GSON 解析必然失败，
+ * 于是整串原文被当正文显示。序列化成标准 JSON 字符串才解析得动。
+ * JS 书源那条路读的是同一个字符串，parseContentProtocol 一样能处理。
+ */
 function toDetailItem(row: any, replyCount: number, replyToName?: string) {
   const content: Record<string, unknown> = { text: row.content };
   if (replyToName) content.replyToName = replyToName;
@@ -829,7 +868,7 @@ function toDetailItem(row: any, replyCount: number, replyToName?: string) {
     name: row.author || "书友",
     avatar: row.avatar || undefined,
     badge: row.badge || undefined,
-    content,
+    content: JSON.stringify(content),
   };
 }
 
