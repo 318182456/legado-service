@@ -369,7 +369,7 @@ async function withReaderRetry<T>(
  * 检查某个书源在订阅输出里的段评规则状态。
  * App 侧不发请求时用来做排除法：先确认服务端的数据本身没问题。
  */
-export async function handleCheckSourceStatus(env: Env, url: URL): Promise<Response> {
+export async function handleCheckSourceStatus(request: Request, env: Env, url: URL): Promise<Response> {
   const q = (url.searchParams.get("q") ?? "").trim();
   if (!q) return err("请输入书源名或书源地址");
 
@@ -388,7 +388,7 @@ export async function handleCheckSourceStatus(env: Env, url: URL): Promise<Respo
     `SELECT value FROM system_config WHERE key = 'review_token'`
   ).first()) as any;
   const token = String(tokenRow?.value ?? "").trim();
-  const origin = url.origin;
+  const origin = publicOrigin(request);
 
   const matches = [];
   for (const row of (rows.results ?? []) as any[]) {
@@ -1028,7 +1028,7 @@ export async function handleReviewJsSourceTemplate(request: Request, env: Env): 
  * 放 assets 里的文件在容器中根本不存在。
  */
 async function serveTemplate(request: Request, env: Env, fileName: string): Promise<Response> {
-  const origin = new URL(request.url).origin;
+  const origin = publicOrigin(request);
   const file = path.join(process.cwd(), "worker", "templates", fileName);
 
   let template: string;
@@ -1054,6 +1054,33 @@ async function serveTemplate(request: Request, env: Env, fileName: string): Prom
 
 /** 注入的 URL 都带这个路径，撤销时靠它认出哪些是我们写进去的 */
 const INJECT_MARK = "/review/summary";
+
+/**
+ * 还原对外可访问的地址。
+ *
+ * 反代通常以明文 HTTP 转发到容器，直接取 new URL(request.url).origin 会得到
+ * http://域名:8443 这种协议错配的地址。写进书源后 nginx 回一个
+ * 「400 The plain HTTP request was sent to HTTPS port」HTML 页，
+ * App 按 JSON 规则解析得到 0 条 —— 请求成功、结果为空、不报错，极难排查。
+ * 因此优先采信反代头。
+ */
+function publicOrigin(request: Request): string {
+  const url = new URL(request.url);
+
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || request.headers.get("host") || url.host;
+
+  let proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  if (!proto) {
+    // Forwarded: proto=https;host=...
+    const fwd = request.headers.get("forwarded");
+    proto = fwd?.match(/proto=([^;,\s]+)/i)?.[1];
+  }
+  if (!proto && request.headers.get("x-forwarded-ssl") === "on") proto = "https";
+  if (!proto) proto = url.protocol.replace(":", "");
+
+  return `${proto}://${host}`;
+}
 
 /** 认得出并剥掉我们加过的名称前缀，避免反复注入把标记叠成一串 */
 const MARK_PATTERN = /^(?:[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]+|\[评\]|\[段评\])+\s*/u;
@@ -1114,7 +1141,7 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
   const markName = body?.markName === true;
   const mark = String(body?.mark ?? "💬").trim() || "💬";
 
-  const origin = new URL(request.url).origin;
+  const origin = publicOrigin(request);
   const tokenRow = (await env.DB.prepare(
     `SELECT value FROM system_config WHERE key = 'review_token'`
   ).first()) as any;
@@ -1298,6 +1325,34 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
   ).first()) as any;
   const token = String(tokenRow?.value ?? "").trim();
   push("访问令牌", "ok", token ? `已配置，注入的 URL 必须带 token=${token.slice(0, 4)}…` : "未配置，/review/* 对外开放");
+
+  // 写进书源的地址必须自己能通。协议错配时 nginx 会回 400 HTML，
+  // App 按 JSON 规则解析得到 0 条，全程不报错，是最难查的一类故障
+  const selfOrigin = publicOrigin(request);
+  try {
+    const probe = `${selfOrigin}/review/summary?book=${encodeURIComponent(bookName)}` +
+      `&chapter=${encodeURIComponent(chapterTitle)}` +
+      (token ? `&token=${encodeURIComponent(token)}` : "");
+    const res = await fetch(probe, { signal: AbortSignal.timeout(10_000) });
+    const type = res.headers.get("content-type") ?? "";
+    const isJson = type.includes("json");
+    push(
+      "对外地址自检",
+      res.ok && isJson ? "ok" : "fail",
+      res.ok && isJson
+        ? `${selfOrigin} 可达且返回 JSON`
+        : `${selfOrigin} 返回 HTTP ${res.status} ${type}——书源拿不到 JSON。` +
+          (res.status === 400 && !isJson
+            ? "多半是协议错配（把 http 请求发给了 HTTPS 端口），重新注入一次即可写入正确协议"
+            : "请检查反代配置")
+    );
+  } catch (e) {
+    push(
+      "对外地址自检",
+      "fail",
+      `${selfOrigin} 不可达：${(e as Error).message}——书源里写的就是这个地址`
+    );
+  }
 
   const aiCfg = await loadAiConfig(env);
   push(
