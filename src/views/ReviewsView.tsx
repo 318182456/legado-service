@@ -20,6 +20,8 @@ export default function ReviewsView() {
   const [saving, setSaving] = useState(false);
   const [mixin, setMixin] = useState('');
   const [injecting, setInjecting] = useState(false);
+  const [markName, setMarkName] = useState(true);
+  const [mark, setMark] = useState('💬');
   const [injectResult, setInjectResult] = useState<api.InjectResult | null>(null);
 
   // 批注表单
@@ -150,7 +152,7 @@ export default function ReviewsView() {
 
     setInjecting(true);
     try {
-      const r = await api.injectReviewRule({ revoke });
+      const r = await api.injectReviewRule({ revoke, markName, mark });
       setInjectResult(r);
       if (!revoke && !r.hasToken) {
         alert(
@@ -332,6 +334,26 @@ export default function ReviewsView() {
               JS 书源会自动跳过，已有其他段评规则的源不会被覆盖。
               这类书源拿不到正文，<strong>只能显示批注，不会触发 AI 生成</strong>。
             </p>
+            <label className="flex items-center gap-2 mb-3 text-xs cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={markName}
+                onChange={(e) => setMarkName(e.target.checked)}
+                className="accent-primary"
+              />
+              <span>给书源名加前缀标记，方便在换源列表里一眼认出</span>
+              <input
+                value={mark}
+                onChange={(e) => setMark(e.target.value)}
+                disabled={!markName}
+                maxLength={4}
+                className="w-16 bg-surface-container-low border border-outline-variant rounded px-2 py-1 text-center disabled:opacity-40"
+              />
+              <span className="text-secondary">
+                效果：{markName ? `${mark}笔趣实现` : '笔趣实现'}
+              </span>
+            </label>
+
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handleInject(false)}
@@ -359,6 +381,7 @@ export default function ReviewsView() {
                 </p>
                 <p className="text-secondary">
                   跳过 JS 书源 {injectResult.jsSkipped} 个 · 无需改动 {injectResult.untouched} 个
+                  {injectResult.renamed > 0 && ` · 重命名 ${injectResult.renamed} 个`}
                   {injectResult.broken > 0 && ` · 跳过损坏数据 ${injectResult.broken} 条`}
                 </p>
                 {!injectResult.hasToken && (

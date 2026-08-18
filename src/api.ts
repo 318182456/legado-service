@@ -318,6 +318,7 @@ export const getReviewJsSource = () =>
 export interface InjectResult {
   mode: "inject" | "revoke";
   changed: number;
+  renamed: number;
   jsSkipped: number;
   untouched: number;
   broken: number;
@@ -325,7 +326,9 @@ export interface InjectResult {
   origin: string;
 }
 
-export const injectReviewRule = (opts: { subscriptionId?: number; revoke?: boolean } = {}) =>
+export const injectReviewRule = (
+  opts: { subscriptionId?: number; revoke?: boolean; markName?: boolean; mark?: string } = {}
+) =>
   apiFetch<InjectResult>("/api/reviews/inject", {
     method: "POST",
     body: JSON.stringify(opts),

@@ -649,6 +649,13 @@ async function serveTemplate(request: Request, env: Env, fileName: string): Prom
 /** 注入的 URL 都带这个路径，撤销时靠它认出哪些是我们写进去的 */
 const INJECT_MARK = "/review/summary";
 
+/** 认得出并剥掉我们加过的名称前缀，避免反复注入把标记叠成一串 */
+const MARK_PATTERN = /^(?:[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]+|\[评\]|\[段评\])+\s*/u;
+
+function stripMark(name: string): string {
+  return name.replace(MARK_PATTERN, "").trim();
+}
+
 function buildReviewRule(origin: string, token: string) {
   const t = token ? `&token=${encodeURIComponent(token)}` : "";
   return {
@@ -682,9 +689,19 @@ function buildReviewRule(origin: string, token: string) {
  * 两条路互斥，给 JS 书源写 ruleReview 是无效的，它们该用混入脚本。
  */
 export async function handleInjectReviewRule(request: Request, env: Env): Promise<Response> {
-  const body = await parseBody<{ subscriptionId?: number; revoke?: boolean }>(request);
+  const body = await parseBody<{
+    subscriptionId?: number;
+    revoke?: boolean;
+    markName?: boolean;
+    mark?: string;
+  }>(request);
   const revoke = body?.revoke === true;
   const subscriptionId = Number(body?.subscriptionId ?? 0) || null;
+
+  // 换源对话框只显示 bookSourceName（tvOrigin），没有别的标记位可用，
+  // 想在那里一眼认出带段评的源，只能在名字上加前缀
+  const markName = body?.markName === true;
+  const mark = String(body?.mark ?? "💬").trim() || "💬";
 
   const origin = new URL(request.url).origin;
   const tokenRow = (await env.DB.prepare(
@@ -705,8 +722,16 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
   let jsSkipped = 0;
   let untouched = 0;
   let broken = 0;
+  let renamed = 0;
 
-  const pending: { id: number; json: string }[] = [];
+  const pending: { id: number; json: string; name: string }[] = [];
+
+  /** 已加过的前缀不重复叠加；撤销时逐层剥掉 */
+  const applyMark = (name: string): string => {
+    const bare = stripMark(name);
+    if (revoke || !markName) return bare;
+    return `${mark}${bare}`;
+  };
 
   for (const row of (rows.results ?? []) as any[]) {
     let source: Record<string, unknown>;
@@ -726,6 +751,10 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
     const current = source.ruleReview as Record<string, unknown> | undefined;
     const isOurs = String(current?.reviewSummaryUrl ?? "").includes(INJECT_MARK);
 
+    const oldName = String(source.bookSourceName ?? "");
+    const newName = applyMark(oldName);
+    const nameChanged = newName !== oldName;
+
     if (revoke) {
       // 只清我们写进去的，别人手配的段评规则不动
       if (!isOurs) {
@@ -734,7 +763,8 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
       }
       source.ruleReview = {};
     } else {
-      if (isOurs && JSON.stringify(current) === JSON.stringify(injectedRule)) {
+      const ruleUpToDate = isOurs && JSON.stringify(current) === JSON.stringify(injectedRule);
+      if (ruleUpToDate && !nameChanged) {
         untouched++;
         continue;
       }
@@ -746,7 +776,12 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
       source.ruleReview = injectedRule;
     }
 
-    pending.push({ id: row.id, json: JSON.stringify(source) });
+    if (nameChanged) {
+      source.bookSourceName = newName;
+      renamed++;
+    }
+
+    pending.push({ id: row.id, json: JSON.stringify(source), name: newName });
     changed++;
   }
 
@@ -756,8 +791,8 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
     await env.DB.batch(
       chunk.map((p) =>
         env.DB.prepare(
-          `UPDATE sources SET raw_json = ?, updated_at = datetime('now') WHERE id = ?`
-        ).bind(p.json, p.id)
+          `UPDATE sources SET raw_json = ?, name = ?, updated_at = datetime('now') WHERE id = ?`
+        ).bind(p.json, p.name, p.id)
       )
     );
   }
@@ -767,6 +802,7 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
   return ok({
     mode: revoke ? "revoke" : "inject",
     changed,
+    renamed,
     jsSkipped,
     untouched,
     broken,
