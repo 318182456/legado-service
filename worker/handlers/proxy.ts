@@ -39,6 +39,37 @@ function rewritePath(pathname: string): string {
   return READER_PREFIX + pathname;
 }
 
+const WEBDAV_PREFIX = READER_PREFIX + '/webdav';
+
+function isWebdavPath(pathname: string): boolean {
+  return pathname === WEBDAV_PREFIX || pathname.startsWith(WEBDAV_PREFIX + '/');
+}
+
+// 逐段传输头（RFC 7230 §6.1）不能透传，content-length 交给 fetch 按实际请求体重算。
+// expect 也必须剥掉：100-continue 已由本服务的 HTTP 层应答完毕，
+// 再转发给 undici 的话它会直接抛 UND_ERR_NOT_SUPPORTED，整个上传就变成 500。
+const HOP_BY_HOP_REQUEST_HEADERS = new Set([
+  'host', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+  'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'expect',
+]);
+
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+  'te', 'trailer', 'transfer-encoding', 'upgrade',
+]);
+
+// reader 的 webdavList 直接用 request.absoluteURI() 拼 <D:href>，经代理转发后它拿到的
+// Host 是内网的 legado-reader:8080，于是 PROPFIND 结果里的 href 全是内网地址。
+// legado 客户端备份收尾会用这些 href 去删除多余的旧备份，请求打到内网必然失败并抛异常，
+// 结果是 zip 已经上传成功、app 却提示「WebDav备份失败」。
+// 这里把 href 收敛成根相对路径 —— 也是 Nextcloud 等 WebDAV 服务端的通行写法。
+function rewriteWebdavHref(xml: string): string {
+  return xml.replace(
+    new RegExp(`https?://[^/\\s"'<>]+(?=${WEBDAV_PREFIX})`, 'gi'),
+    ''
+  );
+}
+
 export async function proxyToReader(request: Request, readerUrl: string): Promise<Response> {
   const url = new URL(request.url);
   
@@ -50,10 +81,13 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
   const headers = new Headers();
   // 复制所有传入请求头，特别是 Authorization, Depth, Destination, Overwrite, Timeout 等
   for (const [key, value] of request.headers.entries()) {
-    // 过滤掉 host 字段，避免目标服务器因 Host 不匹配而拒绝服务
-    if (key.toLowerCase() === 'host') continue;
+    // 逐段传输头不能转发，其中 host 还会让目标服务器因 Host 不匹配而拒绝服务
+    if (HOP_BY_HOP_REQUEST_HEADERS.has(key.toLowerCase())) continue;
     headers.set(key, value);
   }
+  // fetch 会自动解压 gzip 响应体，却把 content-encoding、content-length 原样留在响应头里，
+  // 透传出去客户端就会拿声明为 gzip 的明文去解压。上游是内网，直接要求不压缩最省事。
+  headers.set('accept-encoding', 'identity');
 
   // 针对 MOVE 和 COPY 方法，修改其 Destination 目标地址
   // 因为 Destination 头是绝对 URI，需将其 Host 替换为后台 reader 服务地址
@@ -86,6 +120,43 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
 
   try {
     const res = await fetch(targetUrl, reqInit);
+
+    const responseHeaders = new Headers();
+    // 复制目标服务器的响应头，逐段传输头与 set-cookie 除外
+    for (const [key, value] of res.headers.entries()) {
+      const lower = key.toLowerCase();
+      if (HOP_BY_HOP_RESPONSE_HEADERS.has(lower) || lower === 'set-cookie') continue;
+      responseHeaders.set(key, value);
+    }
+    // entries() 会把多条 set-cookie 并成一行逗号串，必须逐条取出重新 append
+    const setCookies = (res.headers as any).getSetCookie?.() as string[] | undefined;
+    if (setCookies && setCookies.length > 0) {
+      for (const cookie of setCookies) responseHeaders.append('set-cookie', cookie);
+    } else {
+      const cookie = res.headers.get('set-cookie');
+      if (cookie) responseHeaders.append('set-cookie', cookie);
+    }
+
+    // 强制追加 CORS 响应头，确保跨域安全
+    responseHeaders.set('Access-Control-Allow-Origin', '*');
+    responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK');
+    responseHeaders.set('Access-Control-Allow-Headers', '*');
+
+    const hasNullBody = [101, 204, 205, 304].includes(res.status);
+    if (hasNullBody) {
+      return new Response(null, { status: res.status, headers: responseHeaders });
+    }
+
+    const needsSwPatch = url.pathname === '/reader3/sw.js' && res.status === 200;
+    // PROPFIND 的 207 multistatus 需要修正 href；其余 WebDAV 响应没有 body 或是文件流
+    const needsHrefRewrite = res.status === 207 && isWebdavPath(url.pathname);
+
+    // 无需改写的响应直接流式转发，避免备份/下载这类大文件在代理里整份进内存
+    if (!needsSwPatch && !needsHrefRewrite) {
+      return new Response(res.body, { status: res.status, headers: responseHeaders });
+    }
+
     let body: any = await res.arrayBuffer();
 
     // ─── 动态注入 sw.js 异常捕获，防止 Uncaught (in promise) Failed to fetch ───
@@ -181,25 +252,24 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
       }
     }
 
-    const responseHeaders = new Headers();
-    // 复制目标服务器的所有响应头
-    for (const [key, value] of res.headers.entries()) {
-      responseHeaders.set(key, value);
+    // ─── 把 PROPFIND 结果里的内网 href 改成根相对路径 ───
+    if (needsHrefRewrite) {
+      try {
+        const xml = new TextDecoder('utf-8').decode(body);
+        const rewritten = rewriteWebdavHref(xml);
+        if (rewritten !== xml) {
+          body = new TextEncoder().encode(rewritten);
+          console.log(`[Proxy] 已修正 WebDAV PROPFIND 响应中的 href: ${url.pathname}`);
+        }
+      } catch (rewriteError) {
+        console.error('[Proxy] 改写 WebDAV href 失败:', rewriteError);
+      }
     }
 
-    // 强制追加 CORS 响应头，确保跨域安全
-    responseHeaders.set('Access-Control-Allow-Origin', '*');
-    responseHeaders.set('Access-Control-Allow-Credentials', 'true');
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK');
-    responseHeaders.set('Access-Control-Allow-Headers', '*');
+    // 改写过的响应体长度已变，Content-Length 必须按实际字节数重算，否则会被截断
+    responseHeaders.set('Content-Length', body.byteLength.toString());
 
-    // ─── 修正 Content-Length 头部防止 sw.js 被截断 ───
-    if (url.pathname === '/reader3/sw.js' && res.status === 200) {
-      responseHeaders.set('Content-Length', body.byteLength.toString());
-    }
-
-    const hasNullBody = [101, 204, 205, 304].includes(res.status);
-    return new Response(hasNullBody ? null : body, {
+    return new Response(body, {
       status: res.status,
       headers: responseHeaders,
     });
