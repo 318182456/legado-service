@@ -108,14 +108,37 @@ async function paraHashOf(text: string): Promise<string> {
 }
 
 /** summary 把定位信息塞进 paraData，detail 请求时原样回传 */
-function packParaData(bookKey: string, chapterKey: string): string {
-  return `${bookKey}.${chapterKey}`;
+function packParaData(
+  bookKey: string,
+  chapterKey: string,
+  /** 该段校正前的原始段号，不传表示未经校正 */
+  origins?: number[]
+): string {
+  const base = `${bookKey}.${chapterKey}`;
+  // 把映射编进 paraData，App 会原样回传 —— detail 就不必依赖
+  // 服务端内存。之前靠进程内 alignCache，进程重启或多副本
+  // 部署时两次请求落到不同实例，反查就空，App 上显示「文章内容为空」。
+  if (!origins?.length) return base;
+  return `${base}.${origins.join("-")}`;
 }
 
-function unpackParaData(data: string): { bookKey: string; chapterKey: string } | null {
+function unpackParaData(
+  data: string
+): { bookKey: string; chapterKey: string; origins?: number[] } | null {
   const parts = String(data || "").split(".");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
-  return { bookKey: parts[0], chapterKey: parts[1] };
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+  const out: { bookKey: string; chapterKey: string; origins?: number[] } = {
+    bookKey: parts[0],
+    chapterKey: parts[1],
+  };
+  if (parts[2]) {
+    const origins = parts[2]
+      .split("-")
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n));
+    if (origins.length) out.origins = origins;
+  }
+  return out;
 }
 
 // ─── 公开：段评统计 ───────────────────────────────────────────────
@@ -869,7 +892,7 @@ async function summarizeAligned(
   // 拼起来的正文用于判断跨段锚点到底该落在哪一段
   const grouped = new Map<string, { para_index: number; para_text: string; cnt: number; contents: string }>();
   for (const r of detail) {
-    const key = `${r.para_index} ${r.para_text ?? ""}`;
+    const key = `${r.para_index}\u0000${r.para_text ?? ""}`;
     const g = grouped.get(key);
     if (g) {
       g.cnt++;
@@ -969,7 +992,12 @@ async function summarizeAligned(
   }
 
   return [...merged.entries()]
-    .map(([paraIndex, count]) => ({ paraIndex, count, paraData }))
+    .map(([paraIndex, count]) => ({
+      paraIndex,
+      count,
+      // 每段带上自己的原始段号，detail 直接用它反查，不靠内存
+      paraData: packParaData(bookKey, chapterKey, mapping.get(paraIndex)),
+    }))
     .filter((r) => r.count > 0 && (r.paraIndex === -1 || r.paraIndex > 0))
     .sort((a, b) => a.paraIndex - b.paraIndex);
 }
@@ -1202,8 +1230,11 @@ export async function handleReviewDetail(env: Env, url: URL): Promise<Response> 
   const offset = (page - 1) * DETAIL_PAGE_SIZE;
 
   // summary 报的是校正后的段号，这里得按同一套映射反查回原始段号，
-  // 否则点开图标会是空的
-  const origins = await originParaIndexes(locator.bookKey, locator.chapterKey, paraIndex);
+  // 否则点开图标会是空的。paraData 里带了映射就直接用，
+  // 它经 App 原样回传，不受进程重启与多副本部署影响
+  const origins =
+    locator.origins ??
+    (await originParaIndexes(locator.bookKey, locator.chapterKey, paraIndex));
   const placeholders = origins.map(() => "?").join(",");
 
   const rows = await env.DB.prepare(
