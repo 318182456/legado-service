@@ -30,6 +30,7 @@ import {
   readerPost,
   normalizeTitle,
   splitParagraphs,
+  fetchParagraphsFromSource,
   readerGetBookshelf,
   isReaderAuthError,
   clearReaderToken,
@@ -191,6 +192,7 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
     paraData: paraDataStr,
     bookUrl: (url.searchParams.get("bookUrl") ?? "").trim(),
     originUrl: (url.searchParams.get("origin") ?? "").trim(),
+    chapterUrl: (url.searchParams.get("chapterUrl") ?? "").trim(),
   });
   const list = aligned ?? (await summarize(env, bookKey, chapterKey, paraDataStr));
 
@@ -422,6 +424,8 @@ async function alignWithFetchedContent(
     paraData: string;
     bookUrl: string;
     originUrl: string;
+    /** 章节页地址，规则书源可经 URL 规则里的 baseUrl 传上来 */
+    chapterUrl?: string;
   }
 ): Promise<{ paraIndex: number; count: number; paraData: string }[] | null> {
   if (!opts.bookUrl || !opts.originUrl) return null;
@@ -430,23 +434,43 @@ async function alignWithFetchedContent(
     const readerCfg = await resolveReaderConfig(env);
     if (!readerCfg) return null;
 
-    const fetched = await withReaderRetry(env, readerCfg, (token) =>
-      fetchParagraphsViaReader(env, {
-        readerUrl: readerCfg.readerUrl,
-        accessToken: token,
-        bookUrl: opts.bookUrl,
-        originUrl: opts.originUrl,
-        chapterTitle: opts.chapterTitle,
-      })
-    );
-    if (!fetched.paragraphs.length) return null;
+    // 优先按 App 那条路取正文：用书源自己的选择器直接抓源站。
+    // reader 与 App 的分段常有出入，用 reader 的正文校正等于拿错误的尺子量。
+    let paragraphs: string[] | null = null;
+    if (opts.chapterUrl) {
+      const bookSource = await findBookSource(env, opts.originUrl);
+      if (bookSource) {
+        paragraphs = await fetchParagraphsFromSource(
+          opts.chapterUrl,
+          bookSource,
+          opts.chapterTitle
+        );
+        if (paragraphs) {
+          console.log(`[段评] 直接抓源站取到 ${paragraphs.length} 段用于校正`);
+        }
+      }
+    }
+
+    if (!paragraphs) {
+      const fetched = await withReaderRetry(env, readerCfg, (token) =>
+        fetchParagraphsViaReader(env, {
+          readerUrl: readerCfg.readerUrl,
+          accessToken: token,
+          bookUrl: opts.bookUrl,
+          originUrl: opts.originUrl,
+          chapterTitle: opts.chapterTitle,
+        })
+      );
+      paragraphs = fetched.paragraphs;
+    }
+    if (!paragraphs.length) return null;
 
     return await summarizeAligned(
       env,
       opts.bookKey,
       opts.chapterKey,
       opts.paraData,
-      fetched.paragraphs
+      paragraphs
     );
   } catch (e) {
     console.error(`[段评] 取正文校正段号失败：${(e as Error).message}`);
@@ -1508,7 +1532,10 @@ function buildReviewRule(origin: string, token: string) {
       `&author={{encodeURIComponent(book.author)}}` +
       `&chapter={{encodeURIComponent(java.get("title"))}}` +
       `&bookUrl={{encodeURIComponent(book.bookUrl)}}` +
-      `&origin={{encodeURIComponent(book.origin)}}${t}`,
+      `&origin={{encodeURIComponent(book.origin)}}` +
+      // baseUrl 即 chapter.url，服务端据此直接抓源站取正文，
+      // 与 App 走同一条解析路径，段号才对得上
+      `&chapterUrl={{encodeURIComponent(baseUrl)}}${t}`,
     summaryListRule: "$.list",
     summaryParagraphIndexRule: "$.paraIndex",
     summaryCountRule: "$.count",
