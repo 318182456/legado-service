@@ -26,6 +26,10 @@ export interface GenerateInput {
   /** 本章期望生成的主评论条数 */
   density: number;
   personas: string[];
+  /** 热点段落数：评论向这几段集中，其余段落留白 */
+  hotspots: number;
+  /** 回复链最大层数，1 表示只允许单层回复 */
+  replyDepth: number;
 }
 
 export interface ReviewGenerator {
@@ -40,6 +44,8 @@ export interface AiConfig {
   baseUrl: string;
   personas: string[];
   density: number;
+  hotspots: number;
+  replyDepth: number;
   /** 单段落最长送入模型的字数，超出则截断 */
   maxParaChars: number;
 }
@@ -52,6 +58,16 @@ export const DEFAULT_PERSONAS = [
   "考据党：抠设定和前文细节，偶尔纠正作者",
   "情绪型：只会“啊啊啊”“破防了”“这段封神”这类短句",
   "老读者：拿作者别的书或同类桥段作比较",
+  "细节控：盯住一个不起眼的道具或动作反复琢磨",
+  "颜控：只关心角色好不好看、谁和谁般配",
+  "急性子：催更、嫌铺垫长、“说重点”",
+  "共情派：代入角色处境，为角色难过或高兴",
+  "梗王：接梗玩梗，爱用网络流行语",
+  "杠精：专挑逻辑漏洞抬杠，但不骂人",
+  "取名役：给角色起外号，并坚持使用",
+  "理性分析：像做阅读理解一样拆解人物动机",
+  "路人甲：单纯来看热闹，一两个字的短评",
+  "考试型：把小说当知识点，“这段可以当作文素材”",
 ];
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -71,7 +87,9 @@ export async function loadAiConfig(env: Env): Promise<AiConfig> {
     if (parsed.length) personas = parsed;
   }
 
-  const density = Number(cfg["review_density"] || "6");
+  const density = Number(cfg["review_density"] || "12");
+  const hotspots = Number(cfg["review_hotspots"] || "3");
+  const replyDepth = Number(cfg["review_reply_depth"] || "3");
 
   return {
     // auto 时按 base URL 形态自动判断，见 detectProvider
@@ -80,13 +98,19 @@ export async function loadAiConfig(env: Env): Promise<AiConfig> {
     model: cfg["gemini_model"] || DEFAULT_MODEL,
     baseUrl: (cfg["gemini_base_url"] || DEFAULT_BASE_URL).replace(/\/+$/, ""),
     personas,
-    density: Number.isFinite(density) ? Math.min(20, Math.max(1, density)) : 6,
+    density: Number.isFinite(density) ? Math.min(40, Math.max(1, density)) : 12,
+    hotspots: Number.isFinite(hotspots) ? Math.min(10, Math.max(1, hotspots)) : 3,
+    replyDepth: Number.isFinite(replyDepth) ? Math.min(5, Math.max(1, replyDepth)) : 3,
     maxParaChars: 400,
   };
 }
 
 // ─── Prompt ───────────────────────────────────────────────────────
 
+/**
+ * 真实段评区是幂律分布：名场面几十条、平淡段落一条没有。
+ * 均匀撒点会一眼看出是机器生成，所以显式要求向热点段落集中。
+ */
 function buildPrompt(input: GenerateInput, maxParaChars: number): string {
   const numbered = input.paragraphs
     .map((p, i) => {
@@ -94,6 +118,12 @@ function buildPrompt(input: GenerateInput, maxParaChars: number): string {
       return `[${i + 1}] ${text}`;
     })
     .join("\n");
+
+  const chainRule =
+    input.replyDepth <= 1
+      ? "热点段落里挑 1 到 2 条，各带 1 条回复。"
+      : `热点段落至少要有 1 条形成${input.replyDepth}层左右的对话链：` +
+        `有人接话、有人抬杠、原评论者再回一句。回复用 replies 逐层嵌套，最深 ${input.replyDepth} 层。`;
 
   return `你在为一款小说阅读器生成"段评"——读者读到某一段时顺手发的即时评论。
 
@@ -103,16 +133,21 @@ function buildPrompt(input: GenerateInput, maxParaChars: number): string {
 正文段落（方括号内是段落序号）：
 ${numbered}
 
-请挑出本章最值得评论的 ${input.density} 个段落，各写 1 条评论。要求：
+本章总共写 ${input.density} 条主评论，但**绝对不要均匀分布**，要像真实评论区那样扎堆：
 
-1. 只评论真正有反应点的段落——反转、名场面、埋伏笔、角色高光或明显的槽点。平淡的过渡段不要评。
-2. 每条评论 10 到 40 字，口语化，像手机上随手打的。不要书面语，不要"这段描写生动地体现了"这种腔调。
-3. 评论要针对那一段的具体内容，不能是放之四海皆准的空话。
-4. 按下列人设分配评论者，author 字段直接写人设的称呼（自己起个像网名的短名字，不要带冒号和说明）：
+1. 先从全章挑出 ${input.hotspots} 个最有反应点的"热点段落"——反转、名场面、角色高光、
+   炸裂台词或明显槽点。这几段每段给 3 到 6 条评论，不同人设从不同角度七嘴八舌。
+2. 剩下的评论零散分给另外几段，每段只给 1 条。
+3. **绝大多数段落不要有任何评论**。平淡的过渡段、环境描写、承接段一律跳过。
+4. ${chainRule}
+5. 每条评论 8 到 45 字，口语化，像手机上随手打的。不要书面语，
+   不要"这段描写生动地体现了"这种腔调。允许错别字式的口语（"卧槽""笑死""好家伙"）。
+6. 评论必须针对那一段的具体内容，不能是放之四海皆准的空话。
+   同一段的多条评论要角度各异，不能互相重复。
+7. 按下列人设分配评论者，author 字段写一个像网名的短名字（不要带冒号和人设说明）：
 ${input.personas.map((p) => `   - ${p}`).join("\n")}
-5. 其中 1 到 2 条可以带 1 条回复，模拟其他读者接话或抬杠。
-6. paraIndex 必须是上面出现过的段落序号。评论章节标题用 -1。
-7. 全部使用简体中文。不要使用 Markdown，不要加引号包裹。`;
+8. paraIndex 必须是上面出现过的段落序号。评论章节标题用 -1。
+9. 全部使用简体中文。不要使用 Markdown，不要加引号包裹整条评论。`;
 }
 
 const RESPONSE_SCHEMA = {
@@ -133,6 +168,17 @@ const RESPONSE_SCHEMA = {
               properties: {
                 author: { type: "string" },
                 content: { type: "string" },
+                replies: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      author: { type: "string" },
+                      content: { type: "string" },
+                    },
+                    required: ["author", "content"],
+                  },
+                },
               },
               required: ["author", "content"],
             },
@@ -217,20 +263,32 @@ function normalizeDrafts(raw: unknown, paraCount: number): ReviewDraft[] {
 
     const author = String(r.author ?? "").trim().slice(0, 24) || "书友";
 
-    const replies: { author: string; content: string }[] = [];
-    if (Array.isArray(r.replies)) {
-      for (const rep of r.replies) {
-        if (!rep || typeof rep !== "object") continue;
-        const repContent = String((rep as any).content ?? "").trim();
-        if (!repContent) continue;
-        replies.push({
-          author: String((rep as any).author ?? "").trim().slice(0, 24) || "书友",
-          content: repContent.slice(0, 200),
-        });
-      }
-    }
+    // 模型会把对话链嵌套成多层，而库里回复是平铺的（reply_to 指向主评论）。
+    // 按深度优先压平，保持对话顺序，读起来仍是一条完整的接话链。
+    const replies = flattenReplies(r.replies);
 
     out.push({ paraIndex, author, content: content.slice(0, 300), replies });
+  }
+
+  return out;
+}
+
+/** 深度优先压平嵌套回复，保留对话先后顺序 */
+function flattenReplies(raw: unknown, depth = 0): { author: string; content: string }[] {
+  if (!Array.isArray(raw) || depth > 5) return [];
+  const out: { author: string; content: string }[] = [];
+
+  for (const rep of raw) {
+    if (!rep || typeof rep !== "object") continue;
+    const r = rep as Record<string, unknown>;
+    const content = String(r.content ?? "").trim();
+    if (!content) continue;
+
+    out.push({
+      author: String(r.author ?? "").trim().slice(0, 24) || "书友",
+      content: content.slice(0, 200),
+    });
+    out.push(...flattenReplies(r.replies, depth + 1));
   }
 
   return out;

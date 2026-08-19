@@ -223,6 +223,7 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
           `[段评] 同步生成完成，本次响应直接带回 ${fresh.length} 段` +
             `（《${bookName}》- ${chapterTitle}）`
         );
+        void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
         return json({ list: fresh });
       }
       console.log(
@@ -231,10 +232,105 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       );
     } else {
       void autoGenerateViaReader(env, task);
+      // 本章已就绪，顺势把后面几章也备好
+      void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
     }
   }
 
   return json({ list });
+}
+
+/** 读配置决定预生成章数，0 表示关闭 */
+async function schedulePrefetch(
+  env: Env,
+  opts: {
+    bookKey: string;
+    bookName: string;
+    author: string;
+    chapterTitle: string;
+    bookUrl: string;
+    originUrl: string;
+  }
+): Promise<void> {
+  const row = (await env.DB.prepare(
+    `SELECT value FROM system_config WHERE key = 'review_prefetch'`
+  ).first()) as any;
+  const count = Number(row?.value ?? "2");
+  if (!Number.isFinite(count) || count <= 0) return;
+
+  await prefetchNextChapters(env, { ...opts, count: Math.min(10, count) });
+}
+
+/**
+ * 预生成后续章节。
+ *
+ * 读者读到第 N 章时，把 N+1…N+prefetch 章一并生成好，翻页过去就是现成的，
+ * 不必再等那十几秒。逐章串行，避免同时打爆 reader 与模型接口。
+ */
+async function prefetchNextChapters(
+  env: Env,
+  opts: {
+    bookKey: string;
+    bookName: string;
+    author: string;
+    chapterTitle: string;
+    bookUrl: string;
+    originUrl: string;
+    count: number;
+  }
+): Promise<void> {
+  try {
+    const readerCfg = await resolveReaderConfig(env);
+    if (!readerCfg) return;
+
+    const bookSource = await findBookSource(env, opts.originUrl);
+    if (!bookSource) return;
+
+    const toc = await withReaderRetry(env, readerCfg, (token) =>
+      loadToc(env, readerCfg.readerUrl, opts.bookUrl, bookSource, token)
+    );
+    const here = matchChapter(toc, opts.chapterTitle);
+    if (!here) return;
+
+    for (let i = 1; i <= opts.count; i++) {
+      const idx = here.index + i;
+      if (idx >= toc.length) break;
+
+      const title = String(toc[idx]?.title ?? "").trim();
+      if (!title) continue;
+
+      const chapterKey = await chapterKeyOf(title);
+      const row = (await env.DB.prepare(
+        `SELECT status FROM review_chapters WHERE book_key = ? AND chapter_key = ?`
+      )
+        .bind(opts.bookKey, chapterKey)
+        .first()) as any;
+      // 已处理过就跳过，预生成不该重复烧额度
+      if (row?.status && row.status !== "pending") continue;
+
+      console.log(`[段评] 预生成《${opts.bookName}》- ${title}`);
+      await rememberChapterLocation(env, {
+        bookKey: opts.bookKey,
+        chapterKey,
+        bookName: opts.bookName,
+        author: opts.author,
+        chapterTitle: title,
+        bookUrl: opts.bookUrl,
+        originUrl: opts.originUrl,
+      });
+      await autoGenerateViaReader(env, {
+        bookKey: opts.bookKey,
+        chapterKey,
+        bookName: opts.bookName,
+        author: opts.author,
+        chapterTitle: title,
+        bookUrl: opts.bookUrl,
+        originUrl: opts.originUrl,
+      });
+    }
+  } catch (e) {
+    console.error(`[段评] 预生成失败《${opts.bookName}》:`, (e as Error).message);
+  }
 }
 
 /** 登记章节的 bookUrl / origin，不覆盖已有的生成状态 */
@@ -640,6 +736,8 @@ async function generateIfNeeded(env: Env, task: GenerateTask): Promise<void> {
         paragraphs: task.paragraphs,
         density: cfg.density,
         personas: cfg.personas,
+        hotspots: cfg.hotspots,
+        replyDepth: cfg.replyDepth,
       }),
       GENERATE_TIMEOUT_MS
     );
@@ -1522,6 +1620,8 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
       paragraphs,
       density: aiCfg.density,
       personas: aiCfg.personas,
+      hotspots: aiCfg.hotspots,
+      replyDepth: aiCfg.replyDepth,
     });
     push("调用模型", drafts.length > 0 ? "ok" : "fail", `返回 ${drafts.length} 条有效评论`);
 
@@ -1574,6 +1674,9 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
   const readerRow = (await env.DB.prepare(
     `SELECT value FROM system_config WHERE key = 'reader_url'`
   ).first()) as any;
+  const prefetchRow = (await env.DB.prepare(
+    `SELECT value FROM system_config WHERE key = 'review_prefetch'`
+  ).first()) as any;
   const stats = (await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM reviews WHERE origin = 'ai')    AS ai_count,
@@ -1588,6 +1691,9 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     baseUrl: cfg.baseUrl,
     hasApiKey: !!cfg.apiKey,
     density: cfg.density,
+    hotspots: cfg.hotspots,
+    replyDepth: cfg.replyDepth,
+    prefetch: Number(prefetchRow?.value ?? "2"),
     personas: cfg.personas,
     defaultPersonas: DEFAULT_PERSONAS,
     version,

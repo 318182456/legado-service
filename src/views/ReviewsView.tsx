@@ -28,7 +28,10 @@ export default function ReviewsView() {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('gemini-2.5-flash');
   const [baseUrl, setBaseUrl] = useState('https://generativelanguage.googleapis.com');
-  const [density, setDensity] = useState('6');
+  const [density, setDensity] = useState('12');
+  const [hotspots, setHotspots] = useState('3');
+  const [replyDepth, setReplyDepth] = useState('3');
+  const [prefetch, setPrefetch] = useState('2');
   const [personas, setPersonas] = useState('');
   const [reviewToken, setReviewToken] = useState('');
   const [autoFetch, setAutoFetch] = useState(true);
@@ -73,6 +76,9 @@ export default function ReviewsView() {
       setModel(cfg.model);
       setBaseUrl(cfg.baseUrl);
       setDensity(String(cfg.density));
+      setHotspots(String(cfg.hotspots));
+      setReplyDepth(String(cfg.replyDepth));
+      setPrefetch(String(cfg.prefetch));
       setPersonas(cfg.personas.join('\n'));
       setAutoFetch(cfg.autoFetch);
       setReaderUrl(cfg.readerUrl);
@@ -115,6 +121,9 @@ export default function ReviewsView() {
         gemini_model: model.trim(),
         gemini_base_url: baseUrl.trim().replace(/\/+$/, ''),
         review_density: density,
+        review_hotspots: hotspots,
+        review_reply_depth: replyDepth,
+        review_prefetch: prefetch,
         review_personas: personas,
         review_auto_fetch: autoFetch ? '1' : '0',
         reader_url: readerUrl.trim().replace(/\/+$/, ''),
@@ -385,15 +394,61 @@ export default function ReviewsView() {
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="每章生成条数（1-20）">
+              <Field label="每章总条数（1-40）">
                 <input
                   type="number"
                   min={1}
-                  max={20}
+                  max={40}
                   value={density}
                   onChange={(e) => setDensity(e.target.value)}
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
                 />
+              </Field>
+            </div>
+
+            <p className="text-xs text-secondary mt-3 mb-2">
+              真实评论区是扎堆的：名场面几十条、平淡段落一条没有。下面三项控制这种分布，
+              以及提前把后面几章备好，翻页过去就不用等。
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="热点段落数（1-10）">
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={hotspots}
+                  onChange={(e) => setHotspots(e.target.value)}
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+                />
+                <span className="text-xs text-secondary mt-1 block">
+                  评论向这几段集中，每段 3-6 条，其余段落大多留白
+                </span>
+              </Field>
+              <Field label="回复链层数（1-5）">
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={replyDepth}
+                  onChange={(e) => setReplyDepth(e.target.value)}
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+                />
+                <span className="text-xs text-secondary mt-1 block">
+                  接话、抬杠、原作者再回一句，越深越像真实讨论
+                </span>
+              </Field>
+              <Field label="预生成章数（0 关闭）">
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={prefetch}
+                  onChange={(e) => setPrefetch(e.target.value)}
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+                />
+                <span className="text-xs text-secondary mt-1 block">
+                  读到某章时顺带备好后面几章，翻页即有
+                </span>
               </Field>
             </div>
 

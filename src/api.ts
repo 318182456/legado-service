@@ -279,6 +279,9 @@ export interface ReviewConfig {
   baseUrl: string;
   hasApiKey: boolean;
   density: number;
+  hotspots: number;
+  replyDepth: number;
+  prefetch: number;
   personas: string[];
   defaultPersonas: string[];
   version: string;
