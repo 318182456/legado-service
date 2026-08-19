@@ -140,6 +140,13 @@ export async function handleReviewSummary(request: Request, env: Env): Promise<R
   const paraData = packParaData(bookKey, chapterKey);
   const force = body?.force === 1 || body?.force === true;
 
+  // JS 书源把 App 自己的段落发了过来，可据此校正段号：
+  // 生成时用的正文（reader 抓的）与 App 实际渲染的分段常有出入，
+  // 分页正文尤甚，只认序号会让评论整体错位。
+  if (paragraphs.length) {
+    await realignByParagraphText(env, bookKey, chapterKey, paragraphs);
+  }
+
   // 是否生成由章节状态决定，不能看「有没有评论」——
   // 否则一章只要先有了人工批注，AI 就永远轮不到生成
   if (paragraphs.length) {
@@ -709,6 +716,15 @@ async function autoGenerateViaReader(
       console.warn(`[段评] ${tag} 正文分段后为空，放弃`);
       return;
     }
+
+    // 段号是按这份正文算的，App 的分段若与之不同，评论就会钉错段落。
+    // 分页正文尤其容易少抓，这里留一条日志，段数明显偏少时给出警示。
+    if (fetched.paragraphs.length < 20) {
+      console.warn(
+        `[段评] ${tag} 正文仅 ${fetched.paragraphs.length} 段，疑似分页未抓全，` +
+          `段评可能与 App 的段落对不上`
+      );
+    }
     console.log(
       `[段评] ${tag} 已取到正文：index=${fetched.chapterIndex}，${fetched.paragraphs.length} 段，开始生成`
     );
@@ -726,6 +742,61 @@ async function autoGenerateViaReader(
       `自动抓取正文失败 [${opts.bookName} - ${opts.chapterTitle}]:`,
       (e as Error).message
     );
+  }
+}
+
+/**
+ * 按段落原文重新校正段号。
+ *
+ * 段评是靠 para_index 钉在段落上的，而这个序号在生成时是按服务端抓到的正文算的。
+ * App 的分段与之不一定相同（分页少抓、净化规则删行都会让两边错开），
+ * 只认序号就会整体偏移。入库时存了 para_hash，这里拿 App 传来的段落重新比对，
+ * 命中就把序号改成 App 侧的真实位置 —— 对不上的宁可留在原位，也不瞎猜。
+ */
+async function realignByParagraphText(
+  env: Env,
+  bookKey: string,
+  chapterKey: string,
+  paragraphs: string[]
+): Promise<void> {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT DISTINCT para_index, para_hash FROM reviews
+        WHERE book_key = ? AND chapter_key = ? AND para_hash != ''`
+    )
+      .bind(bookKey, chapterKey)
+      .all();
+
+    const stored = (rows.results ?? []) as any[];
+    if (!stored.length) return;
+
+    // App 段落的哈希 → 真实序号
+    const actual = new Map<string, number>();
+    for (let i = 0; i < paragraphs.length; i++) {
+      const h = await paraHashOf(paragraphs[i]);
+      // 同文重复时以首次出现为准
+      if (!actual.has(h)) actual.set(h, i + 1);
+    }
+
+    let moved = 0;
+    for (const row of stored) {
+      const want = actual.get(String(row.para_hash));
+      if (want === undefined || want === Number(row.para_index)) continue;
+
+      await env.DB.prepare(
+        `UPDATE reviews SET para_index = ?
+          WHERE book_key = ? AND chapter_key = ? AND para_hash = ?`
+      )
+        .bind(want, bookKey, chapterKey, String(row.para_hash))
+        .run();
+      moved++;
+    }
+
+    if (moved) {
+      console.log(`[段评] 按段落原文校正了 ${moved} 处段号（共 ${stored.length} 段）`);
+    }
+  } catch (e) {
+    console.error("[段评] 段号校正失败:", (e as Error).message);
   }
 }
 
