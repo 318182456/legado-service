@@ -13,6 +13,14 @@
 import fs from "fs-extra";
 import path from "path";
 import { Env } from "../types";
+import {
+  buildAnchor,
+  packAnchor,
+  unpackAnchor,
+  buildIndex,
+  locate,
+  type MatchLevel,
+} from "../para-anchor";
 import { ok, err, json, parseBody, hashText, rebuildCache } from "../utils";
 import {
   loadAiConfig,
@@ -859,57 +867,85 @@ async function summarizeAligned(
   const stored = (rows.results ?? []) as any[];
   if (!stored.length) return [];
 
-  // 请求方正文的 hash 与前缀索引
-  const byHash = new Map<string, number>();
-  const byPrefix = new Map<string, number>();
-  for (let i = 0; i < paragraphs.length; i++) {
-    const h = await paraHashOf(paragraphs[i]);
-    if (!byHash.has(h)) byHash.set(h, i + 1);
-
-    const prefix = normalizeKeyText(paragraphs[i]).slice(0, 16);
-    if (prefix.length >= 8 && !byPrefix.has(prefix)) byPrefix.set(prefix, i + 1);
-  }
+  const idx = buildIndex(paragraphs);
 
   const merged = new Map<number, number>();
   // 展示段号 → 原始段号，detail 反查时用
   const mapping = new Map<number, number[]>();
+  const levels = new Map<string, number>();
   let realigned = 0;
   let dropped = 0;
+
+  // 两趟：先让靠谱的级别把位子占上，模糊级只能在剩下的空位里挑。
+  // 否则一段会被两条评论共享，而真正属于它的那条反而被挤掉
+  const taken = new Set<number>();
+  const pending: { row: any; original: number }[] = [];
+
+  const place = (original: number, hit: { index: number; level: MatchLevel }, cnt: number) => {
+    const target = hit.index + 1;
+    if (hit.level) levels.set(hit.level, (levels.get(hit.level) ?? 0) + 1);
+    if (target !== original) realigned++;
+    merged.set(target, (merged.get(target) ?? 0) + cnt);
+    const origins = mapping.get(target) ?? [];
+    if (!origins.includes(original)) origins.push(original);
+    mapping.set(target, origins);
+  };
+
   for (const row of stored) {
     const original = Number(row.para_index);
-    let target = byHash.get(String(row.para_hash));
 
-    // hash 没命中就退到段首前缀 —— 两侧把段落合并/拆分时仍能对上
-    if (target === undefined && row.para_text) {
-      target = byPrefix.get(normalizeKeyText(String(row.para_text)).slice(0, 16));
+    // 章节标题（-1）没有对应段落，本来就无需定位
+    if (original === -1) {
+      merged.set(-1, (merged.get(-1) ?? 0) + Number(row.cnt));
+      mapping.set(-1, [-1]);
+      continue;
     }
 
-    if (target === undefined) {
-      // 章节标题（-1）没有对应段落，本来就无需定位
-      if (original === -1) {
-        merged.set(-1, (merged.get(-1) ?? 0) + Number(row.cnt));
-        mapping.set(-1, [-1]);
-        continue;
-      }
-      // 定位不到就不显示：评论钉在错误的段落上比不显示更糟
+    const anchor = unpackAnchor(row.para_text);
+    if (!anchor) {
       dropped++;
       continue;
     }
 
-    if (target !== original) realigned++;
-    merged.set(target, (merged.get(target) ?? 0) + Number(row.cnt));
+    const hit = locate(idx, anchor, taken);
+    if (hit.index >= 0 && hit.level !== "fuzzy") {
+      taken.add(hit.index);
+      place(original, hit, Number(row.cnt));
+    } else {
+      // 模糊命中的先挣着，等精确级全部落完再重算
+      pending.push({ row, original });
+    }
+  }
 
-    const origins = mapping.get(target) ?? [];
-    if (!origins.includes(original)) origins.push(original);
-    mapping.set(target, origins);
+  for (const { row, original } of pending) {
+    const anchor = unpackAnchor(row.para_text);
+    const hit = anchor
+      ? locate(idx, anchor, taken)
+      : { index: -1, level: null as MatchLevel };
+
+    if (hit.index < 0) {
+      // 定位不到就不显示：评论钉在错误的段落上比不显示更糟
+      dropped++;
+      continue;
+    }
+    taken.add(hit.index);
+    place(original, hit, Number(row.cnt));
   }
 
   rememberAlignment(`${bookKey}.${chapterKey}`, mapping);
 
-  if (realigned || dropped) {
+  if (realigned || dropped || levels.size) {
+    const names: Record<string, string> = {
+      hash: "全文",
+      edge: "首尾",
+      key: "关键字",
+      context: "前后文",
+      fuzzy: "模糊",
+    };
+    const detail = [...levels.entries()].map(([k, v]) => `${names[k] ?? k}${v}`).join(" ");
     console.log(
-      `[段评] 按段落原文定位：校正 ${realigned} 处` +
-        (dropped ? `，${dropped} 处锚点失配已隐藏` : "")
+      `[段评] 锚点定位：命中 ${detail || "0"}，校正 ${realigned} 处` +
+        (dropped ? `，${dropped} 处定位失败已隐藏` : "")
     );
   }
 
@@ -1052,6 +1088,12 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
     const paraText =
       draft.paraIndex === -1 ? task.chapterTitle : task.paragraphs[draft.paraIndex - 1] ?? "";
     const paraHash = await paraHashOf(paraText);
+    // 段评绑定的是「章节里的这段文字」而非段号，连同前后文一起存，
+    // App 分段与服务端不同时靠它重新定位
+    const anchor =
+      draft.paraIndex === -1
+        ? packAnchor({ target: "", before: "", after: "" })
+        : packAnchor(buildAnchor(task.paragraphs, draft.paraIndex - 1));
 
     const inserted = await env.DB.prepare(
       `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, para_text, author, badge, content, origin)
@@ -1062,7 +1104,7 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
         task.chapterKey,
         draft.paraIndex,
         paraHash,
-        paraText.slice(0, 60),
+        anchor,
         draft.author,
         draft.content
       )
@@ -1081,7 +1123,7 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
           task.chapterKey,
           draft.paraIndex,
           paraHash,
-          paraText.slice(0, 60),
+          anchor,
           reply.author,
           reply.content,
           parentId
