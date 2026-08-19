@@ -38,7 +38,6 @@ import {
   readerPost,
   normalizeTitle,
   splitParagraphs,
-  fetchParagraphsFromSource,
   readerGetBookshelf,
   isReaderAuthError,
   clearReaderToken,
@@ -200,7 +199,6 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
     paraData: paraDataStr,
     bookUrl: (url.searchParams.get("bookUrl") ?? "").trim(),
     originUrl: (url.searchParams.get("origin") ?? "").trim(),
-    chapterUrl: (url.searchParams.get("chapterUrl") ?? "").trim(),
   });
   const list = aligned ?? (await summarize(env, bookKey, chapterKey, paraDataStr));
 
@@ -432,34 +430,29 @@ async function alignWithFetchedContent(
     paraData: string;
     bookUrl: string;
     originUrl: string;
-    /** 章节页地址，规则书源可经 URL 规则里的 baseUrl 传上来 */
-    chapterUrl?: string;
   }
 ): Promise<{ paraIndex: number; count: number; paraData: string }[] | null> {
-  if (!opts.bookUrl || !opts.originUrl) return null;
+  // 这条路整个失效时只会默默回退到原始段号，日志里看不出任何线索，
+  // 所以每个退出点都要报出原因
+  if (!opts.bookUrl || !opts.originUrl) {
+    console.log(
+      `[段评] 无法校正段号：缺参数 ${!opts.bookUrl ? "bookUrl" : ""}${!opts.bookUrl && !opts.originUrl ? " " : ""}${!opts.originUrl ? "origin" : ""}` +
+        `（书源里的 URL 规则需重新注入）`
+    );
+    return null;
+  }
 
   try {
     const readerCfg = await resolveReaderConfig(env);
-    if (!readerCfg) return null;
-
-    // 优先按 App 那条路取正文：用书源自己的选择器直接抓源站。
-    // reader 与 App 的分段常有出入，用 reader 的正文校正等于拿错误的尺子量。
-    let paragraphs: string[] | null = null;
-    if (opts.chapterUrl) {
-      const bookSource = await findBookSource(env, opts.originUrl);
-      if (bookSource) {
-        paragraphs = await fetchParagraphsFromSource(
-          opts.chapterUrl,
-          bookSource,
-          opts.chapterTitle
-        );
-        if (paragraphs) {
-          console.log(`[段评] 直接抓源站取到 ${paragraphs.length} 段用于校正`);
-        }
-      }
+    if (!readerCfg) {
+      console.log("[段评] 无法校正段号：reader 未配置");
+      return null;
     }
 
-    if (!paragraphs) {
+    // reader 就是 legado 内核，分页、净化、各类规则语法都由它处理，
+    // 分段与 App 同源；残余差异交给五级锚点定位
+    let paragraphs: string[];
+    {
       const fetched = await withReaderRetry(env, readerCfg, (token) =>
         fetchParagraphsViaReader(env, {
           readerUrl: readerCfg.readerUrl,
@@ -470,8 +463,12 @@ async function alignWithFetchedContent(
         })
       );
       paragraphs = fetched.paragraphs;
+      console.log(`[段评] 借 reader 取到 ${paragraphs.length} 段用于校正`);
     }
-    if (!paragraphs.length) return null;
+    if (!paragraphs.length) {
+      console.log("[段评] 无法校正段号：取到的正文为空");
+      return null;
+    }
 
     return await summarizeAligned(
       env,
