@@ -145,6 +145,8 @@ export const SCHEMA_STATEMENTS = [
     like_count  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
   )`,
+    // 存段首原文，服务端与 App 分段不一致时可据此重新定位
+    `ALTER TABLE reviews ADD COLUMN para_text TEXT DEFAULT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_reviews_locate ON reviews(book_key, chapter_key, para_index)`,
     `CREATE INDEX IF NOT EXISTS idx_reviews_reply_to ON reviews(reply_to)`,
     `CREATE INDEX IF NOT EXISTS idx_reviews_origin ON reviews(origin)`

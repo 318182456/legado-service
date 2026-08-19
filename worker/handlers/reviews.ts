@@ -140,12 +140,6 @@ export async function handleReviewSummary(request: Request, env: Env): Promise<R
   const paraData = packParaData(bookKey, chapterKey);
   const force = body?.force === 1 || body?.force === true;
 
-  // JS 书源把 App 自己的段落发了过来，可据此校正段号：
-  // 生成时用的正文（reader 抓的）与 App 实际渲染的分段常有出入，
-  // 分页正文尤甚，只认序号会让评论整体错位。
-  if (paragraphs.length) {
-    await realignByParagraphText(env, bookKey, chapterKey, paragraphs);
-  }
 
   // 是否生成由章节状态决定，不能看「有没有评论」——
   // 否则一章只要先有了人工批注，AI 就永远轮不到生成
@@ -161,7 +155,12 @@ export async function handleReviewSummary(request: Request, env: Env): Promise<R
     });
   }
 
-  return json({ list: await summarize(env, bookKey, chapterKey, paraData) });
+  // 请求方给了正文就按段落原文实时定位，避免两侧分段不同导致的错位
+  const list = paragraphs.length
+    ? await summarizeAligned(env, bookKey, chapterKey, paraData, paragraphs)
+    : await summarize(env, bookKey, chapterKey, paraData);
+
+  return json({ list });
 }
 
 /**
@@ -746,58 +745,67 @@ async function autoGenerateViaReader(
 }
 
 /**
- * 按段落原文重新校正段号。
+ * 按段落原文实时定位段号。
  *
- * 段评是靠 para_index 钉在段落上的，而这个序号在生成时是按服务端抓到的正文算的。
- * App 的分段与之不一定相同（分页少抓、净化规则删行都会让两边错开），
- * 只认序号就会整体偏移。入库时存了 para_hash，这里拿 App 传来的段落重新比对，
- * 命中就把序号改成 App 侧的真实位置 —— 对不上的宁可留在原位，也不瞎猜。
+ * 段号本身不可靠：生成时按服务端抓到的正文算，而 App 的分段常与之不同
+ * （分页少抓、换行差异、净化规则删行）。para_hash 记的是段落原文，
+ * 这才是稳定锚点 —— 请求方给出正文时，就用它现算段号，不动库里的数据。
+ * 这样同一批段评在不同分段的书源下都能落到正确位置。
  */
-async function realignByParagraphText(
+async function summarizeAligned(
   env: Env,
   bookKey: string,
   chapterKey: string,
+  paraData: string,
   paragraphs: string[]
-): Promise<void> {
-  try {
-    const rows = await env.DB.prepare(
-      `SELECT DISTINCT para_index, para_hash FROM reviews
-        WHERE book_key = ? AND chapter_key = ? AND para_hash != ''`
-    )
-      .bind(bookKey, chapterKey)
-      .all();
+): Promise<{ paraIndex: number; count: number; paraData: string }[]> {
+  const rows = await env.DB.prepare(
+    `SELECT para_index, para_hash, para_text, COUNT(*) AS cnt FROM reviews
+      WHERE book_key = ? AND chapter_key = ? AND reply_to IS NULL
+      GROUP BY para_index, para_hash, para_text`
+  )
+    .bind(bookKey, chapterKey)
+    .all();
 
-    const stored = (rows.results ?? []) as any[];
-    if (!stored.length) return;
+  const stored = (rows.results ?? []) as any[];
+  if (!stored.length) return [];
 
-    // App 段落的哈希 → 真实序号
-    const actual = new Map<string, number>();
-    for (let i = 0; i < paragraphs.length; i++) {
-      const h = await paraHashOf(paragraphs[i]);
-      // 同文重复时以首次出现为准
-      if (!actual.has(h)) actual.set(h, i + 1);
-    }
+  // 请求方正文的 hash 与前缀索引
+  const byHash = new Map<string, number>();
+  const byPrefix = new Map<string, number>();
+  for (let i = 0; i < paragraphs.length; i++) {
+    const h = await paraHashOf(paragraphs[i]);
+    if (!byHash.has(h)) byHash.set(h, i + 1);
 
-    let moved = 0;
-    for (const row of stored) {
-      const want = actual.get(String(row.para_hash));
-      if (want === undefined || want === Number(row.para_index)) continue;
-
-      await env.DB.prepare(
-        `UPDATE reviews SET para_index = ?
-          WHERE book_key = ? AND chapter_key = ? AND para_hash = ?`
-      )
-        .bind(want, bookKey, chapterKey, String(row.para_hash))
-        .run();
-      moved++;
-    }
-
-    if (moved) {
-      console.log(`[段评] 按段落原文校正了 ${moved} 处段号（共 ${stored.length} 段）`);
-    }
-  } catch (e) {
-    console.error("[段评] 段号校正失败:", (e as Error).message);
+    const prefix = normalizeKeyText(paragraphs[i]).slice(0, 16);
+    if (prefix.length >= 8 && !byPrefix.has(prefix)) byPrefix.set(prefix, i + 1);
   }
+
+  const merged = new Map<number, number>();
+  let realigned = 0;
+  for (const row of stored) {
+    const original = Number(row.para_index);
+    let target = byHash.get(String(row.para_hash));
+
+    // hash 没命中就退到段首前缀 —— 两侧把段落合并/拆分时仍能对上
+    if (target === undefined && row.para_text) {
+      target = byPrefix.get(normalizeKeyText(String(row.para_text)).slice(0, 16));
+    }
+    // 都对不上就沿用原序号，宁可不动也不瞎猜
+    const final = target ?? original;
+    if (target !== undefined && target !== original) realigned++;
+
+    merged.set(final, (merged.get(final) ?? 0) + Number(row.cnt));
+  }
+
+  if (realigned) {
+    console.log(`[段评] 按段落原文实时定位，校正 ${realigned} 处段号`);
+  }
+
+  return [...merged.entries()]
+    .map(([paraIndex, count]) => ({ paraIndex, count, paraData }))
+    .filter((r) => r.count > 0 && (r.paraIndex === -1 || r.paraIndex > 0))
+    .sort((a, b) => a.paraIndex - b.paraIndex);
 }
 
 async function summarize(
@@ -935,14 +943,15 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
     const paraHash = await paraHashOf(paraText);
 
     const inserted = await env.DB.prepare(
-      `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, author, badge, content, origin)
-       VALUES (?, ?, ?, ?, ?, 'AI', ?, 'ai')`
+      `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, para_text, author, badge, content, origin)
+       VALUES (?, ?, ?, ?, ?, ?, 'AI', ?, 'ai')`
     )
       .bind(
         task.bookKey,
         task.chapterKey,
         draft.paraIndex,
         paraHash,
+        paraText.slice(0, 60),
         draft.author,
         draft.content
       )
@@ -953,14 +962,15 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
 
     for (const reply of draft.replies) {
       await env.DB.prepare(
-        `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, author, badge, content, reply_to, origin)
-         VALUES (?, ?, ?, ?, ?, 'AI', ?, ?, 'ai')`
+        `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, para_text, author, badge, content, reply_to, origin)
+         VALUES (?, ?, ?, ?, ?, ?, 'AI', ?, ?, 'ai')`
       )
         .bind(
           task.bookKey,
           task.chapterKey,
           draft.paraIndex,
           paraHash,
+          paraText.slice(0, 60),
           reply.author,
           reply.content,
           parentId
