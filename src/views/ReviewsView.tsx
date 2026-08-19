@@ -302,9 +302,14 @@ export default function ReviewsView() {
     if (!activeBook) return;
     if (!confirm(`清空《${activeBook.book_name}》的全部 AI 段评？人工批注会保留，之后重新打开章节会再次生成。`)) return;
     try {
-      await api.clearAiReviews(activeBook.book_key);
-      await openBook(activeBook);
+      const r = await api.clearAiReviews(activeBook.book_key);
+      setActiveBook(null);
+      setReviews([]);
       await fetchAll();
+      alert(
+        `已清空《${activeBook.book_name}》的 AI 段评` +
+          (r?.removedChapters ? `，并移除 ${r.removedChapters} 个空章节记录` : '')
+      );
     } catch (e) {
       alert('清空失败: ' + String(e));
     }

@@ -400,7 +400,7 @@ export const injectReviewRule = (
   });
 
 export const clearAiReviews = (bookKey: string, chapterKey?: string) =>
-  apiFetch<any>("/api/reviews/clear-ai", {
+  apiFetch<{ removedChapters: number }>("/api/reviews/clear-ai", {
     method: "POST",
     body: JSON.stringify({ bookKey, chapterKey }),
   });

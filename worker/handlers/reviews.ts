@@ -1247,29 +1247,44 @@ export async function handleClearAiReviews(request: Request, env: Env): Promise<
   if (!bookKey) return err("缺少 bookKey");
 
   const chapterKey = String(body?.chapterKey ?? "").trim();
-  if (chapterKey) {
-    await env.DB.prepare(
-      `DELETE FROM reviews WHERE book_key = ? AND chapter_key = ? AND origin = 'ai'`
-    )
-      .bind(bookKey, chapterKey)
-      .run();
-    await env.DB.prepare(
-      `UPDATE review_chapters SET status = 'pending', error = NULL WHERE book_key = ? AND chapter_key = ?`
-    )
-      .bind(bookKey, chapterKey)
-      .run();
-  } else {
-    await env.DB.prepare(`DELETE FROM reviews WHERE book_key = ? AND origin = 'ai'`)
-      .bind(bookKey)
-      .run();
-    await env.DB.prepare(
-      `UPDATE review_chapters SET status = 'pending', error = NULL WHERE book_key = ?`
-    )
-      .bind(bookKey)
-      .run();
-  }
+  const scope = chapterKey ? "AND chapter_key = ?" : "";
+  const params = chapterKey ? [bookKey, chapterKey] : [bookKey];
 
-  return ok();
+  await env.DB.prepare(
+    `DELETE FROM reviews WHERE book_key = ? ${scope} AND origin = 'ai'`
+  )
+    .bind(...params)
+    .run();
+
+  // 章节记录一并清掉，否则残留一堆空壳：书目里章数不减、
+  // 界面上还列着没有任何评论的章节。留下仍有人工批注的那些。
+  const removed = await env.DB.prepare(
+    `DELETE FROM review_chapters
+      WHERE book_key = ? ${scope}
+        AND NOT EXISTS (
+          SELECT 1 FROM reviews r
+           WHERE r.book_key = review_chapters.book_key
+             AND r.chapter_key = review_chapters.chapter_key
+        )`
+  )
+    .bind(...params)
+    .run();
+
+  // 还有批注的章节只重置状态，让 AI 段评可以重新生成
+  await env.DB.prepare(
+    `UPDATE review_chapters SET status = 'pending', error = NULL, generated_at = NULL
+      WHERE book_key = ? ${scope}`
+  )
+    .bind(...params)
+    .run();
+
+  console.log(
+    `[段评] 清空 AI 段评：bookKey=${bookKey.slice(0, 10)}…` +
+      (chapterKey ? ` chapterKey=${chapterKey.slice(0, 10)}…` : "（整本）") +
+      `，移除 ${removed?.meta?.changes ?? 0} 条空壳章节记录`
+  );
+
+  return ok({ removedChapters: removed?.meta?.changes ?? 0 });
 }
 
 /**
