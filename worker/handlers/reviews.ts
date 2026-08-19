@@ -179,7 +179,20 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
 
   const bookKey = await bookKeyOf(bookName, author);
   const chapterKey = await chapterKeyOf(chapterTitle);
-  const list = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
+  const paraDataStr = packParaData(bookKey, chapterKey);
+
+  // 规则书源发的是 GET、带不了正文，锚点校正就无从谈起，
+  // App 只能拿到生成时的原始段号 —— 两侧分段一有出入就整体错位。
+  // 这里主动取一次 App 侧的正文（reader 抓的那份有缓存），据此实时定位。
+  const aligned = await alignWithFetchedContent(env, {
+    bookKey,
+    chapterKey,
+    chapterTitle,
+    paraData: paraDataStr,
+    bookUrl: (url.searchParams.get("bookUrl") ?? "").trim(),
+    originUrl: (url.searchParams.get("origin") ?? "").trim(),
+  });
+  const list = aligned ?? (await summarize(env, bookKey, chapterKey, paraDataStr));
 
   // 规则书源带不了正文，改由服务端借 reader 去抓，然后自行生成。
   // 这一步不阻塞响应：抓目录 + 抓正文 + 调模型远超 App 的请求超时，
@@ -386,6 +399,58 @@ async function prefetchNextChapters(
     }
   } catch (e) {
     console.error(`[段评] 预生成失败《${opts.bookName}》:`, (e as Error).message);
+  }
+}
+
+/**
+ * 规则书源专用：自己取一次正文，按段落原文实时定位段号。
+ *
+ * JS 书源会把 App 的段落 POST 上来，规则书源只能发 GET，于是校正无从谈起。
+ * 这里退而用 reader 抓的正文比对，能纠正「生成后正文有变动」一类的偏差。
+ *
+ * 但要清楚它的上限：reader 与 App 对同一份 HTML 的分段本就可能不同
+ * （实测某章 App 把一句话按源站换行拆成两段，reader 合成一段，后续整体差 3），
+ * 这种差异用 reader 的正文校不出来 —— 唯一可靠的参照是 App 自己的段落。
+ * 要根治只能让该书源改用 JS 书源，由 getReviewSummary 把 App 的段落投喂上来。
+ */
+async function alignWithFetchedContent(
+  env: Env,
+  opts: {
+    bookKey: string;
+    chapterKey: string;
+    chapterTitle: string;
+    paraData: string;
+    bookUrl: string;
+    originUrl: string;
+  }
+): Promise<{ paraIndex: number; count: number; paraData: string }[] | null> {
+  if (!opts.bookUrl || !opts.originUrl) return null;
+
+  try {
+    const readerCfg = await resolveReaderConfig(env);
+    if (!readerCfg) return null;
+
+    const fetched = await withReaderRetry(env, readerCfg, (token) =>
+      fetchParagraphsViaReader(env, {
+        readerUrl: readerCfg.readerUrl,
+        accessToken: token,
+        bookUrl: opts.bookUrl,
+        originUrl: opts.originUrl,
+        chapterTitle: opts.chapterTitle,
+      })
+    );
+    if (!fetched.paragraphs.length) return null;
+
+    return await summarizeAligned(
+      env,
+      opts.bookKey,
+      opts.chapterKey,
+      opts.paraData,
+      fetched.paragraphs
+    );
+  } catch (e) {
+    console.error(`[段评] 取正文校正段号失败：${(e as Error).message}`);
+    return null;
   }
 }
 
@@ -782,7 +847,10 @@ async function summarizeAligned(
   }
 
   const merged = new Map<number, number>();
+  // 展示段号 → 原始段号，detail 反查时用
+  const mapping = new Map<number, number[]>();
   let realigned = 0;
+  let dropped = 0;
   for (const row of stored) {
     const original = Number(row.para_index);
     let target = byHash.get(String(row.para_hash));
@@ -791,15 +859,34 @@ async function summarizeAligned(
     if (target === undefined && row.para_text) {
       target = byPrefix.get(normalizeKeyText(String(row.para_text)).slice(0, 16));
     }
-    // 都对不上就沿用原序号，宁可不动也不瞎猜
-    const final = target ?? original;
-    if (target !== undefined && target !== original) realigned++;
 
-    merged.set(final, (merged.get(final) ?? 0) + Number(row.cnt));
+    if (target === undefined) {
+      // 章节标题（-1）没有对应段落，本来就无需定位
+      if (original === -1) {
+        merged.set(-1, (merged.get(-1) ?? 0) + Number(row.cnt));
+        mapping.set(-1, [-1]);
+        continue;
+      }
+      // 定位不到就不显示：评论钉在错误的段落上比不显示更糟
+      dropped++;
+      continue;
+    }
+
+    if (target !== original) realigned++;
+    merged.set(target, (merged.get(target) ?? 0) + Number(row.cnt));
+
+    const origins = mapping.get(target) ?? [];
+    if (!origins.includes(original)) origins.push(original);
+    mapping.set(target, origins);
   }
 
-  if (realigned) {
-    console.log(`[段评] 按段落原文实时定位，校正 ${realigned} 处段号`);
+  rememberAlignment(`${bookKey}.${chapterKey}`, mapping);
+
+  if (realigned || dropped) {
+    console.log(
+      `[段评] 按段落原文定位：校正 ${realigned} 处` +
+        (dropped ? `，${dropped} 处锚点失配已隐藏` : "")
+    );
   }
 
   return [...merged.entries()]
@@ -991,6 +1078,31 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 // ─── 公开：段评详情 ───────────────────────────────────────────────
 
+/** summary 校正过的段号 → 原始段号，供 detail 反查 */
+const alignCache = new Map<string, Map<number, number[]>>();
+const ALIGN_CACHE_MAX = 64;
+
+function rememberAlignment(chapterCacheKey: string, mapping: Map<number, number[]>): void {
+  if (alignCache.size >= ALIGN_CACHE_MAX) {
+    const oldest = alignCache.keys().next().value;
+    if (oldest !== undefined) alignCache.delete(oldest);
+  }
+  alignCache.set(chapterCacheKey, mapping);
+}
+
+/**
+ * 求某个展示段号对应的原始段号。
+ * 没有校正记录时原样返回 —— 未经校正的章节，两者本就相同。
+ */
+async function originParaIndexes(
+  bookKey: string,
+  chapterKey: string,
+  paraIndex: number
+): Promise<number[]> {
+  const mapped = alignCache.get(`${bookKey}.${chapterKey}`)?.get(paraIndex);
+  return mapped?.length ? mapped : [paraIndex];
+}
+
 export async function handleReviewDetail(env: Env, url: URL): Promise<Response> {
   const denied = await reviewTokenGuard(env, url);
   if (denied) return denied;
@@ -1004,12 +1116,18 @@ export async function handleReviewDetail(env: Env, url: URL): Promise<Response> 
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
   const offset = (page - 1) * DETAIL_PAGE_SIZE;
 
+  // summary 报的是校正后的段号，这里得按同一套映射反查回原始段号，
+  // 否则点开图标会是空的
+  const origins = await originParaIndexes(locator.bookKey, locator.chapterKey, paraIndex);
+  const placeholders = origins.map(() => "?").join(",");
+
   const rows = await env.DB.prepare(
     `SELECT * FROM reviews
-      WHERE book_key = ? AND chapter_key = ? AND para_index = ? AND reply_to IS NULL
+      WHERE book_key = ? AND chapter_key = ? AND para_index IN (${placeholders})
+        AND reply_to IS NULL
       ORDER BY id LIMIT ? OFFSET ?`
   )
-    .bind(locator.bookKey, locator.chapterKey, paraIndex, DETAIL_PAGE_SIZE + 1, offset)
+    .bind(locator.bookKey, locator.chapterKey, ...origins, DETAIL_PAGE_SIZE + 1, offset)
     .all();
 
   const all = (rows.results ?? []) as any[];
