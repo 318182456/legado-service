@@ -319,13 +319,25 @@ export async function fetchParagraphsFromSource(
   // 含 JS、正则、JSONPath 的规则交给 reader 处理，这里只认纯 CSS
   if (/<js>|@js:|##|\$\.|@json:|@XPath:|@x:/i.test(rule)) return null;
 
-  const selector = cssSelectorOf(rule);
-  if (!selector) return null;
+  const steps = parseRuleChain(rule);
+  if (!steps.length) return null;
+
+  // 书源给的章节地址常是相对路径，按书源域名补全
+  let target = chapterUrl;
+  if (!/^https?:\/\//i.test(target)) {
+    const base = String(bookSource.bookSourceUrl ?? "").replace(/#.*$/, "");
+    if (!base) return null;
+    try {
+      target = new URL(target, base).toString();
+    } catch {
+      return null;
+    }
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(chapterUrl, {
+    const res = await fetch(target, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
@@ -335,7 +347,7 @@ export async function fetchParagraphsFromSource(
     if (!res.ok) return null;
 
     const html = await res.text();
-    const inner = extractBySelector(html, selector);
+    const inner = applyRuleChain(html, steps);
     if (!inner) return null;
 
     const paragraphs = splitParagraphs(inner, chapterTitle);
@@ -347,40 +359,110 @@ export async function fetchParagraphsFromSource(
   }
 }
 
-/** 从 legado 规则里取出 CSS 选择器部分，取不出返回 null */
-function cssSelectorOf(rule: string): string | null {
-  let r = rule.replace(/^@css:/i, "").trim();
-  // 去掉取值后缀：@text @html @all 等
-  r = r.split(/@(?:text|html|all|ownText)\b/i)[0].trim();
-  // class.foo / id.bar / tag.div 这类简写转成 CSS
-  r = r
-    .replace(/^class\.([\w-]+)(?:\.(\d+))?$/i, ".$1")
-    .replace(/^id\.([\w-]+)$/i, "#$1")
-    .replace(/^tag\.([\w-]+)$/i, "$1");
-  if (!r || /[{}<>]/.test(r)) return null;
-  return r;
+/**
+ * 解析 legado 的链式规则，例如 class.nr_nr@tag.div.1@textNodes。
+ * 每一段是一次逐层下钻；@text / @textNodes / @html 这类取值后缀不产生下钻。
+ * 出现无法处理的写法时返回空数组，交回 reader。
+ */
+interface RuleStep {
+  kind: "class" | "id" | "tag";
+  value: string;
+  /** 同名元素中取第几个，缺省为全部 */
+  nth?: number;
 }
 
-/**
- * 极简选择器匹配：只支持 #id 与 .class 两种最常见写法。
- * 更复杂的层级选择器交回 reader，不在这里做半吊子实现。
- */
-function extractBySelector(html: string, selector: string): string | null {
-  const idMatch = selector.match(/^#([\w-]+)$/);
-  if (idMatch) return extractTagContent(html, "id", idMatch[1]);
+function parseRuleChain(rule: string): RuleStep[] {
+  const raw = rule.replace(/^@css:/i, "").trim();
+  const steps: RuleStep[] = [];
 
-  const classMatch = selector.match(/^\.([\w-]+)$/);
-  if (classMatch) return extractTagContent(html, "class", classMatch[1]);
+  for (const seg of raw.split("@")) {
+    const part = seg.trim();
+    if (!part) continue;
+    // 取值后缀不参与下钻
+    if (/^(text|textNodes|html|all|ownText|href|src)$/i.test(part)) continue;
 
-  return null;
+    const m = part.match(/^(class|id|tag)\.([\w-]+)(?:\.(\d+))?$/i);
+    if (m) {
+      steps.push({
+        kind: m[1].toLowerCase() as RuleStep["kind"],
+        value: m[2],
+        nth: m[3] !== undefined ? Number(m[3]) : undefined,
+      });
+      continue;
+    }
+    // CSS 写法的 #id / .class
+    const css = part.match(/^([#.])([\w-]+)$/);
+    if (css) {
+      steps.push({ kind: css[1] === "#" ? "id" : "class", value: css[2] });
+      continue;
+    }
+    // 认不出的写法一律放弃，避免解析出错误的正文
+    return [];
+  }
+
+  return steps;
+}
+
+/** 依次下钻，返回最内层元素的 HTML */
+function applyRuleChain(html: string, steps: RuleStep[]): string | null {
+  let current: string | null = html;
+  for (const step of steps) {
+    if (current === null) return null;
+    current = extractStep(current, step);
+  }
+  return current;
+}
+
+function extractStep(html: string, step: RuleStep): string | null {
+  if (step.kind === "tag") {
+    const all = extractAllTags(html, step.value);
+    if (!all.length) return null;
+    // legado 的下标从 0 起
+    return all[step.nth ?? 0] ?? null;
+  }
+  return extractTagContent(html, step.kind, step.value);
+}
+
+/** 取出同名标签的全部内容，供带下标的规则挑选 */
+function extractAllTags(html: string, tag: string): string[] {
+  const out: string[] = [];
+  const open = new RegExp(`<${tag}\\b[^>]*>`, "gi");
+  let m: RegExpExecArray | null;
+
+  while ((m = open.exec(html)) !== null) {
+    const start = m.index + m[0].length;
+    let depth = 1;
+    const scan = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+    scan.lastIndex = start;
+
+    let inner: RegExpExecArray | null;
+    let end = html.length;
+    let resume = html.length;
+    while ((inner = scan.exec(html)) !== null) {
+      depth += inner[1] ? -1 : 1;
+      if (depth === 0) {
+        end = inner.index;
+        // 从闭合标签之后继续，否则会在同一段内容里反复匹配
+        resume = inner.index + inner[0].length;
+        break;
+      }
+    }
+    out.push(html.slice(start, end));
+    open.lastIndex = resume;
+  }
+  return out;
 }
 
 /** 取出带指定属性的标签内容，按标签配对计数以支持嵌套 */
 function extractTagContent(html: string, attr: string, value: string): string | null {
+  // [^>]* 是贪婪的，会把属性前的空白一起吞掉，故不能要求 \s 前缀
   const pattern =
     attr === "id"
-      ? new RegExp(`<(\\w+)[^>]*\\sid\\s*=\\s*["']${value}["'][^>]*>`, "i")
-      : new RegExp(`<(\\w+)[^>]*\\sclass\\s*=\\s*["'][^"']*\\b${value}\\b[^"']*["'][^>]*>`, "i");
+      ? new RegExp(`<(\\w+)[^>]*?\\sid\\s*=\\s*["']${value}["'][^>]*>`, "i")
+      : new RegExp(
+          `<(\\w+)[^>]*?\\sclass\\s*=\\s*["'][^"']*\\b${value}\\b[^"']*["'][^>]*>`,
+          "i"
+        );
 
   const open = html.match(pattern);
   if (!open || open.index === undefined) return null;
