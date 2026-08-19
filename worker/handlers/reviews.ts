@@ -240,6 +240,52 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
   return json({ list });
 }
 
+/**
+ * 把 reader 目录标题改写成与来访者同一种编号写法。
+ *
+ * App 用「第五百八十一章 …」，reader 目录是「第581章 …」，
+ * 两者算出的 chapterKey 不同。预生成若直接用目录标题落库，
+ * App 永远读不到那批数据，只能自己再生成一次 —— 白烧额度还容易串章。
+ */
+function alignTitleStyle(tocTitle: string, sampleTitle: string): string {
+  const tocNum = extractChapterNumber(tocTitle);
+  if (tocNum === null) return tocTitle;
+
+  // 来访者用的是中文数字还是阿拉伯数字
+  const sampleUsesCn = /第\s*[〇零一二三四五六七八九十百千万]+\s*[章节回话卷篇]/.test(sampleTitle);
+  const tocUsesCn = /第\s*[〇零一二三四五六七八九十百千万]+\s*[章节回话卷篇]/.test(tocTitle);
+  if (sampleUsesCn === tocUsesCn) return tocTitle;
+
+  const body = tocTitle.replace(
+    /^\s*第\s*(?:[0-9]+|[〇零一二三四五六七八九十百千万]+)\s*([章节回话卷篇])\s*/,
+    ""
+  );
+  const unit = tocTitle.match(/第\s*(?:[0-9]+|[〇零一二三四五六七八九十百千万]+)\s*([章节回话卷篇])/)?.[1] ?? "章";
+  const num = sampleUsesCn ? numberToCn(tocNum) : String(tocNum);
+  return `第${num}${unit} ${body}`.trim();
+}
+
+/** 579 → 五百七十九 */
+function numberToCn(n: number): string {
+  if (n <= 0) return String(n);
+  const d = "零一二三四五六七八九";
+  const units = ["", "十", "百", "千"];
+  const s = String(n);
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const digit = Number(s[i]);
+    const pos = s.length - 1 - i;
+    if (digit === 0) {
+      if (out && !out.endsWith("零")) out += "零";
+      continue;
+    }
+    // 十几读作「十九」而非「一十九」
+    if (!(digit === 1 && pos === 1 && i === 0)) out += d[digit];
+    out += units[pos] ?? "";
+  }
+  return out.replace(/零+$/, "");
+}
+
 /** 读配置决定预生成章数，0 表示关闭 */
 async function schedulePrefetch(
   env: Env,
@@ -296,8 +342,10 @@ async function prefetchNextChapters(
       const idx = here.index + i;
       if (idx >= toc.length) break;
 
-      const title = String(toc[idx]?.title ?? "").trim();
-      if (!title) continue;
+      const rawTitle = String(toc[idx]?.title ?? "").trim();
+      if (!rawTitle) continue;
+      // 与来访者（App）保持同一种编号写法，否则算出的键对不上
+      const title = alignTitleStyle(rawTitle, opts.chapterTitle);
 
       const chapterKey = await chapterKeyOf(title);
       const row = (await env.DB.prepare(
@@ -308,7 +356,9 @@ async function prefetchNextChapters(
       // 已处理过就跳过，预生成不该重复烧额度
       if (row?.status && row.status !== "pending") continue;
 
-      console.log(`[段评] 预生成《${opts.bookName}》- ${title}`);
+      // 用目录标题本身作为键与落库标题，确保「取正文的那一章」
+      // 与「落库的那一章」是同一个 —— 两次定位若结果不同就会串章
+      console.log(`[段评] 预生成《${opts.bookName}》- ${title}（目录 index=${idx}）`);
       await rememberChapterLocation(env, {
         bookKey: opts.bookKey,
         chapterKey,
