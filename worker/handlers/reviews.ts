@@ -1489,7 +1489,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
       readerCfg.accessToken
     );
     const text = typeof content === "string" ? content : String(content ?? "");
-    paragraphs = splitParagraphs(text);
+    paragraphs = splitParagraphs(text, String(toc[index]?.title ?? chapterTitle));
     if (!paragraphs.length) {
       push("抓取正文", "fail", "正文为空或分段后无内容");
       return ok({ steps, canGenerate: false });

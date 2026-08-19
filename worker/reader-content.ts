@@ -289,15 +289,15 @@ export async function fetchParagraphsViaReader(
   if (!text.trim()) throw new Error("正文为空");
 
   return {
-    paragraphs: splitParagraphs(text),
+    paragraphs: splitParagraphs(text, String(toc[index]?.title ?? opts.chapterTitle)),
     chapterIndex: index,
     chapterTitle: String(toc[index]?.title ?? opts.chapterTitle),
   };
 }
 
 /** 与书源脚本里的分段规则保持一致，否则段号会错位 */
-export function splitParagraphs(text: string): string[] {
-  return String(text)
+export function splitParagraphs(text: string, chapterTitle?: string): string[] {
+  const lines = String(text)
     .replace(/<\s*br\s*\/?\s*>/gi, "\n")
     .replace(/<\s*\/\s*(p|div)\s*>/gi, "\n")
     .replace(/<[^>]+>/g, "")
@@ -308,6 +308,36 @@ export function splitParagraphs(text: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.replace(/^[\s　]+/, "").replace(/[\s　]+$/, ""))
     .filter(Boolean);
+
+  return stripLeadingTitle(lines, chapterTitle);
+}
+
+/**
+ * 有些源会把章节标题混进正文首行（还常带「(第1/3页)」这类分页标记），
+ * 而 App 的正文不含标题行 —— 不剔掉的话所有段号整体偏移 1，段评全部错位。
+ */
+function stripLeadingTitle(lines: string[], chapterTitle?: string): string[] {
+  if (!lines.length) return lines;
+
+  const first = lines[0];
+  // 去掉分页标记后再比对，「第580章 散装人偶 (第1/3页)」→「第580章 散装人偶」
+  const bare = first
+    .replace(/[(（]\s*第?\s*\d+\s*[/／]\s*\d+\s*页?\s*[)）]\s*$/, "")
+    .trim();
+
+  const looksLikeTitle =
+    // 与章节标题一致（含中文数字与阿拉伯数字混用的情形）
+    (!!chapterTitle &&
+      (normalizeTitle(bare) === normalizeTitle(chapterTitle) ||
+        (chapterTitleBody(bare).length > 0 &&
+          chapterTitleBody(bare) === chapterTitleBody(chapterTitle)))) ||
+    // 没传标题时，退而识别「第N章 …」且够短的首行。
+    // 必须整行都像标题：正文里「第三章说的那件事…」这种也以第N章开头，不能误删
+    (!chapterTitle &&
+      bare.length <= 40 &&
+      /^第\s*[0-9〇零一二三四五六七八九十百千万]+\s*[章节回话卷篇][\s:：、.]*[^，。！？；,.!?;]*$/.test(bare));
+
+  return looksLikeTitle ? lines.slice(1) : lines;
 }
 
 // ─── 登录 ─────────────────────────────────────────────────────────
