@@ -177,7 +177,9 @@ export function locate(
   idx: ParagraphIndex,
   anchor: ParaAnchor,
   /** 已被更高级别占住的段落，模糊级不再抢 */
-  taken?: ReadonlySet<number>
+  taken?: ReadonlySet<number>,
+  /** 评论正文；锚点跨多段时用它判断评的到底是哪一段 */
+  commentText?: string
 ): MatchResult {
   const { target, before, after } = anchor;
   if (!target) return { index: -1, level: null };
@@ -186,7 +188,18 @@ export function locate(
   const exact = idx.byFull.get(target);
   if (exact !== undefined) return { index: exact, level: "hash" };
 
-  // L2 首尾锚点：段首或段尾 40 字命中即可
+  // L2a 锚点被拆成了连续多段。
+  //
+  // 生成时服务端把「长发公主…一坐」+「那去森林里摘蘑菇…」当成一段，
+  // 现在 reader 把它们分开了。此时不能简单选段首所在的那段 ——
+  // 评论讲的是蘑菇，却会挂到「公主换衣服」那句上。
+  // 按字数取锚点主体落在哪一段，平分时归前一段。
+  if (target.length >= MIN_ANCHOR_LEN) {
+    const spanned = locateSpan(idx, target, commentText);
+    if (spanned >= 0) return { index: spanned, level: "edge" };
+  }
+
+  // L2b 首尾锚点：段首或段尾 40 字命中即可
   if (target.length >= MIN_ANCHOR_LEN) {
     const head = idx.byHead.get(target.slice(0, EDGE_LEN));
     if (head !== undefined) return { index: head, level: "edge" };
@@ -279,6 +292,79 @@ export function locate(
   }
 
   return { index: -1, level: null };
+}
+
+/**
+ * 锚点被拆成了连续多段时，按主体字数定位。
+ *
+ * 从每一段试着往后拼，拼出的串能覆盖整个 target 就算命中。
+ * 命中后在这几段里选占字数最多的一段 —— 评论通常冲着篇幅最长
+ * 的那部分而来。只拼到 SPAN_MAX 段，再多就不是拆段而是误匹配了。
+ */
+const SPAN_MAX = 4;
+/** 评论与各段相关度的最小区分度，拉不开就不猜 */
+const SPAN_MARGIN = 0.01;
+
+function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): number {
+  const cg = commentText ? bigrams(normalizeAnchorText(commentText)) : null;
+  for (let i = 0; i < idx.norms.length; i++) {
+    const first = idx.norms[i];
+    // 首段必须是 target 的前缀，否则不可能是拆开的开头
+    if (first.length < MIN_ANCHOR_LEN || !target.startsWith(first)) continue;
+    // 整段完全相等交给 L1，这里只管真拆开的
+    if (first.length === target.length) continue;
+
+    let joined = first;
+    const parts = [i];
+    for (let j = i + 1; j < idx.norms.length && parts.length < SPAN_MAX; j++) {
+      joined += idx.norms[j];
+      parts.push(j);
+      if (joined.length >= target.length) break;
+    }
+
+    // 拼出来的串要能覆盖 target（锚点存库时截断过，取前缀比）
+    if (parts.length < 2 || !joined.startsWith(target)) continue;
+
+    // 归属到哪一段：先看评论说的是什么。
+    //
+    // 「吃下去能看到小人儿的蘑菇」这条评论，锚点跨了「公主坐下」与
+    // 「推荐蘑菇」两段，前一段还更长 —— 按字数会选错。看评论与哪段
+    // 用词重合度高，才能选中讲蘑菇的那一段。
+    if (cg && cg.size) {
+      let best = -1;
+      let bestScore = 0;
+      let runnerUp = 0;
+      for (const at of parts) {
+        const score = jaccard(cg, idx.grams[at]);
+        if (score > bestScore) {
+          runnerUp = bestScore;
+          bestScore = score;
+          best = at;
+        } else if (score > runnerUp) {
+          runnerUp = score;
+        }
+      }
+      // 评论对几段的相关度差不多时不强分，转而按字数
+      if (best >= 0 && bestScore > 0 && bestScore - runnerUp >= SPAN_MARGIN) return best;
+    }
+
+    // 评论看不出倾向（或没传）时，按在 target 里占字最多的一段
+    let best = parts[0];
+    let bestLen = 0;
+    let used = 0;
+    for (const at of parts) {
+      const seg = idx.norms[at];
+      const within = Math.min(seg.length, Math.max(0, target.length - used));
+      // 严格大于：平分时保留靠前的一段
+      if (within > bestLen) {
+        bestLen = within;
+        best = at;
+      }
+      used += seg.length;
+    }
+    return best;
+  }
+  return -1;
 }
 
 /** 在正文里找一段上下文锚点：先精确后包含 */

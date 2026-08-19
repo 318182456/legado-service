@@ -854,15 +854,36 @@ async function summarizeAligned(
   paragraphs: string[]
 ): Promise<{ paraIndex: number; count: number; paraData: string }[]> {
   const rows = await env.DB.prepare(
-    `SELECT para_index, para_hash, para_text, COUNT(*) AS cnt FROM reviews
-      WHERE book_key = ? AND chapter_key = ? AND reply_to IS NULL
-      GROUP BY para_index, para_hash, para_text`
+    // 不用 GROUP_CONCAT：Postgres 没有这个函数（它叫 string_agg），
+    // 取明细回来自己归并，两边都能跑
+    `SELECT para_index, para_hash, para_text, content FROM reviews
+      WHERE book_key = ? AND chapter_key = ? AND reply_to IS NULL`
   )
     .bind(bookKey, chapterKey)
     .all();
 
-  const stored = (rows.results ?? []) as any[];
-  if (!stored.length) return [];
+  const detail = (rows.results ?? []) as any[];
+  if (!detail.length) return [];
+
+  // 按锚点归并：同一段的多条评论共用一个锚点，
+  // 拼起来的正文用于判断跨段锚点到底该落在哪一段
+  const grouped = new Map<string, { para_index: number; para_text: string; cnt: number; contents: string }>();
+  for (const r of detail) {
+    const key = `${r.para_index} ${r.para_text ?? ""}`;
+    const g = grouped.get(key);
+    if (g) {
+      g.cnt++;
+      if (g.contents.length < 400) g.contents += " " + String(r.content ?? "");
+    } else {
+      grouped.set(key, {
+        para_index: Number(r.para_index),
+        para_text: String(r.para_text ?? ""),
+        cnt: 1,
+        contents: String(r.content ?? ""),
+      });
+    }
+  }
+  const stored = [...grouped.values()];
 
   const idx = buildIndex(paragraphs);
 
@@ -904,7 +925,8 @@ async function summarizeAligned(
       continue;
     }
 
-    const hit = locate(idx, anchor, taken);
+    // 锚点跨多段时靠评论内容判断归属，所以要把评论一并传进去
+    const hit = locate(idx, anchor, taken, String(row.contents ?? ""));
     if (hit.index >= 0 && hit.level !== "fuzzy") {
       taken.add(hit.index);
       place(original, hit, Number(row.cnt));
@@ -917,7 +939,7 @@ async function summarizeAligned(
   for (const { row, original } of pending) {
     const anchor = unpackAnchor(row.para_text);
     const hit = anchor
-      ? locate(idx, anchor, taken)
+      ? locate(idx, anchor, taken, String(row.contents ?? ""))
       : { index: -1, level: null as MatchLevel };
 
     if (hit.index < 0) {
