@@ -300,9 +300,6 @@ export function splitParagraphs(text: string, chapterTitle?: string): string[] {
   const lines = String(text)
     .replace(/<\s*br\s*\/?\s*>/gi, "\n")
     .replace(/<\s*\/\s*(p|div)\s*>/gi, "\n")
-    // reader 有时把段落塞进同一个 <p> 里只用全角空格缩进分隔，
-    // App 那边却是独立段落。按缩进补回换行，两侧段数才对得上。
-    .replace(/([。！？…”」』])\s*[　 ]{2,}(?=[^\s　])/g, "$1\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/g, "<")
