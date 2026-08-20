@@ -302,17 +302,33 @@ export function locate(
  * 的那部分而来。只拼到 SPAN_MAX 段，再多就不是拆段而是误匹配了。
  */
 const SPAN_MAX = 4;
+/** 首段对齐时比多少字（不要求全串相等，两边标点可能不同） */
+const SPAN_HEAD = 16;
+/** 拼接串与 target 的最低重合比例 */
+const SPAN_COVER = 0.85;
 /** 评论与各段相关度的最小区分度，拉不开就不猜 */
 const SPAN_MARGIN = 0.01;
 
 function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): number {
   const cg = commentText ? bigrams(normalizeAnchorText(commentText)) : null;
+
   for (let i = 0; i < idx.norms.length; i++) {
     const first = idx.norms[i];
-    // 首段必须是 target 的前缀，否则不可能是拆开的开头
-    if (first.length < MIN_ANCHOR_LEN || !target.startsWith(first)) continue;
-    // 整段完全相等交给 L1，这里只管真拆开的
-    if (first.length === target.length) continue;
+    if (first.length < MIN_ANCHOR_LEN) continue;
+
+    // 首段要与 target 开头对得上。不用严格前缀 —— 两边的引号形态、
+    // 标点可能不同（「」 vs “”），归一化过的串也未必完全相等。
+    // 取前 SPAN_HEAD 字比，够分辨是哪一段就行。
+    const headLen = Math.min(SPAN_HEAD, first.length, target.length);
+    if (headLen < MIN_ANCHOR_LEN) continue;
+    if (first.slice(0, headLen) !== target.slice(0, headLen)) continue;
+
+    // 整段相等交给 L1，这里只管真拆开的
+    if (first === target) continue;
+
+    // target 可能反过来比请求方的段短（存库时截断到 TARGET_LEN），
+    // 那就不是拆段，交给 L2b 的子串判定
+    if (first.length >= target.length) continue;
 
     let joined = first;
     const parts = [i];
@@ -321,9 +337,12 @@ function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): 
       parts.push(j);
       if (joined.length >= target.length) break;
     }
+    if (parts.length < 2) continue;
 
-    // 拼出来的串要能覆盖 target（锚点存库时截断过，取前缀比）
-    if (parts.length < 2 || !joined.startsWith(target)) continue;
+    // 拼出来的串要能覆盖 target。同样不要求严格前缀：
+    // 按字符算重合度，达到 SPAN_COVER 就算同一段落被拆开。
+    const cover = prefixOverlap(joined, target);
+    if (cover < target.length * SPAN_COVER) continue;
 
     // 归属到哪一段：先看评论说的是什么。
     //
@@ -364,7 +383,23 @@ function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): 
     }
     return best;
   }
+
+  // 反方向：请求方把好几段合成了一段，而锚点只对应其中一段。
+  // 锚点存库时截断到 TARGET_LEN，所以这里拿 target 去合并段里找。
+  for (let i = 0; i < idx.norms.length; i++) {
+    const n = idx.norms[i];
+    if (n.length <= target.length || n.length < MIN_ANCHOR_LEN) continue;
+    if (n.includes(target)) return i;
+  }
   return -1;
+}
+
+/** 两串从头开始逐字相同的长度 */
+function prefixOverlap(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
 }
 
 /** 在正文里找一段上下文锚点：先精确后包含 */

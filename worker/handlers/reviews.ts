@@ -45,6 +45,14 @@ import {
   extractChapterNumber,
 } from "../reader-content";
 
+/**
+ * 首次请求的同步等待上限。
+ *
+ * App 把空结果也写进 reviewSummaryCache，不退书架就不再请求这一章，
+ * 所以首次得等一下。之前 20s 太长，6s 能赶上大部分生成。
+ */
+const SYNC_WAIT_MS = 6_000;
+
 const DETAIL_PAGE_SIZE = 20;
 const REPLY_PAGE_SIZE = 20;
 const GENERATE_TIMEOUT_MS = 45_000;
@@ -173,18 +181,21 @@ export async function handleReviewSummary(request: Request, env: Env): Promise<R
   // 是否生成由章节状态决定，不能看「有没有评论」——
   // 否则一章只要先有了人工批注，AI 就永远轮不到生成。
   //
-  // 不等生成：调模型动辄十几秒，而 App 拉进度、同步书架都卡在
-  // 这个请求上，进度就一直对不上。先把现有结果返回，生成放后台。
+  // 同步等一下（上限 SYNC_WAIT_MS）：赶上生成就当场带回，
+  // 否则 App 会缓存空结果，要退出重进才看得到。
   if (paragraphs.length) {
-    void generateIfNeeded(env, {
-      bookKey,
-      chapterKey,
-      bookName,
-      author,
-      chapterTitle,
-      paragraphs,
-      force,
-    });
+    await Promise.race([
+      generateIfNeeded(env, {
+        bookKey,
+        chapterKey,
+        bookName,
+        author,
+        chapterTitle,
+        paragraphs,
+        force,
+      }),
+      new Promise((r) => setTimeout(r, SYNC_WAIT_MS)),
+    ]);
   }
 
   // 请求方给了正文就按段落原文实时定位，避免两侧分段不同导致的错位
@@ -260,11 +271,28 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       originUrl,
     };
 
-    // 生成一律走后台。以前这里同步等 20s，为的是首次就能带回数据
-    // （App 会把空结果写进 reviewSummaryCache，不退书架不刷新），
-    // 但代价是整个请求被阻塞 —— App 的进度同步也跟着卡住。
-    // 缓存那个问题改由预生成解决：读当前章时已经在备后面几章了。
-    void autoGenerateViaReader(env, task);
+    // App 会把空结果写进 reviewSummaryCache，不退书架就不再请求这一章，
+    // 所以首次得同步等一会儿，赶上生成就当场带回。
+    //
+    // 之前担心这个等待会拖住 App 的进度同步，一度改成完全不等 —— 结果
+    // 段评要退出重进才看得到。进度那个问题的真凶是 reader 取正文时写了
+    // durChapterIndex（已由 cache=1 修掉），与这里无关。
+    // 等待时长从 20s 收到 6s：赶得上大部分生成，又不至于让人察觉卡顿。
+    const generated = await Promise.race([
+      autoGenerateViaReader(env, task).then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), SYNC_WAIT_MS)),
+    ]);
+    if (generated) {
+      const fresh = await summarize(env, bookKey, chapterKey, paraDataStr);
+      if (fresh.length) {
+        console.log(
+          `[段评] 同步生成完成，本次直接带回 ${fresh.length} 段` +
+            `（《${bookName}》- ${chapterTitle}）`
+        );
+        void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
+        return json({ list: fresh });
+      }
+    }
     void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
   }
 
