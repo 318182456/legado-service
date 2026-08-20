@@ -1142,9 +1142,10 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
         ? packAnchor({ target: "", before: "", after: "" })
         : packAnchor(buildAnchor(task.paragraphs, draft.paraIndex - 1));
 
+    // badge 留空：App 里挂个「AI」标签一眼就露馅，来源靠 origin 列区分就够了
     const inserted = await env.DB.prepare(
       `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, para_text, author, badge, content, origin)
-       VALUES (?, ?, ?, ?, ?, ?, 'AI', ?, 'ai')`
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'ai')`
     )
       .bind(
         task.bookKey,
@@ -1163,7 +1164,7 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
     for (const reply of draft.replies) {
       await env.DB.prepare(
         `INSERT INTO reviews (book_key, chapter_key, para_index, para_hash, para_text, author, badge, content, reply_to, origin)
-         VALUES (?, ?, ?, ?, ?, ?, 'AI', ?, ?, 'ai')`
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'ai')`
       )
         .bind(
           task.bookKey,
@@ -1326,11 +1327,16 @@ function toDetailItem(row: any, replyCount: number, replyToName?: string) {
   if (row.like_count > 0) content.likeCount = Number(row.like_count);
   if (replyCount > 0) content.replyCount = replyCount;
 
+  // 存量数据里 AI 段评的 badge 是写死的 "AI"，直接回给 App 会露馅，这里滤掉
+  const badge = row.badge && String(row.badge).trim().toUpperCase() !== "AI"
+    ? row.badge
+    : undefined;
+
   return {
     id: String(row.id),
     name: row.author || "书友",
     avatar: row.avatar || undefined,
-    badge: row.badge || undefined,
+    badge,
     content: JSON.stringify(content),
   };
 }
@@ -1485,6 +1491,77 @@ export async function handleDeleteReview(env: Env, id: number): Promise<Response
 }
 
 /** 清空一本书或一章的 AI 段评，人工批注保留 */
+/** 过期清理默认保留天数；0 表示关闭 */
+const DEFAULT_RETAIN_DAYS = 30;
+
+/**
+ * 删掉超过保留期的 AI 段评。
+ *
+ * 只清 origin='ai'：人工批注是自己写的，不该被时间冲掉。
+ * 顺带清理不再挂任何评论的章节壳，否则书目里章数只增不减。
+ *
+ * 日期比较传的是算好的绝对时间：SQLite 的 datetime('now','-N days')
+ * 在 Postgres 适配层里不会被改写，只有 datetime('now') 那一种形式会。
+ * 传参数化的 "YYYY-MM-DD HH:MM:SS" 两边都认。
+ */
+export async function purgeExpiredReviews(
+  env: Env,
+  retainDays: number
+): Promise<{ reviews: number; chapters: number }> {
+  if (!Number.isFinite(retainDays) || retainDays <= 0) {
+    return { reviews: 0, chapters: 0 };
+  }
+
+  const cutoff = new Date(Date.now() - retainDays * 86400_000)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+
+  const removedReviews = await env.DB.prepare(
+    `DELETE FROM reviews WHERE origin = 'ai' AND created_at < ?`
+  )
+    .bind(cutoff)
+    .run();
+
+  // 评论清空后留下的章节壳：没有任何评论了才删，
+  // 还挂着人工批注的章节要留下
+  const removedChapters = await env.DB.prepare(
+    `DELETE FROM review_chapters
+      WHERE NOT EXISTS (
+        SELECT 1 FROM reviews r
+         WHERE r.book_key = review_chapters.book_key
+           AND r.chapter_key = review_chapters.chapter_key
+      )
+      AND created_at < ?`
+  )
+    .bind(cutoff)
+    .run();
+
+  const reviews = Number(removedReviews?.meta?.changes ?? 0);
+  const chapters = Number(removedChapters?.meta?.changes ?? 0);
+  if (reviews || chapters) {
+    console.log(
+      `[段评] 过期清理：保留 ${retainDays} 天（早于 ${cutoff}），` +
+        `删除 ${reviews} 条 AI 段评、${chapters} 个空章节记录`
+    );
+  }
+  return { reviews, chapters };
+}
+
+/** 读取配置里的保留天数 */
+export async function loadRetainDays(env: Env): Promise<number> {
+  const row = (await env.DB.prepare(
+    `SELECT value FROM system_config WHERE key = 'review_retain_days'`
+  ).first()) as any;
+  const raw = row?.value;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return DEFAULT_RETAIN_DAYS;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_RETAIN_DAYS;
+  return Math.min(3650, Math.floor(n));
+}
+
 export async function handleClearAiReviews(request: Request, env: Env): Promise<Response> {
   const body = await parseBody<{ bookKey?: string; chapterKey?: string }>(request);
   const bookKey = String(body?.bookKey ?? "").trim();
@@ -2060,6 +2137,7 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
   const prefetchRow = (await env.DB.prepare(
     `SELECT value FROM system_config WHERE key = 'review_prefetch'`
   ).first()) as any;
+  const retainDays = await loadRetainDays(env);
   const stats = (await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM reviews WHERE origin = 'ai')    AS ai_count,
@@ -2077,6 +2155,7 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     hotspots: cfg.hotspots,
     replyDepth: cfg.replyDepth,
     prefetch: Number(prefetchRow?.value ?? "2"),
+    retainDays,
     personas: cfg.personas,
     defaultPersonas: DEFAULT_PERSONAS,
     version,

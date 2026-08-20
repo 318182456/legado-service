@@ -9,6 +9,7 @@ import {
 } from "../utils";
 import { runWorkerPool } from "./worker-runner";
 import type { CheckVerdict } from "./worker-runner";
+import { purgeExpiredReviews, loadRetainDays } from "./reviews";
 
 export async function handleScheduled(env: Env) {
   try {
@@ -77,6 +78,16 @@ export async function handleScheduled(env: Env) {
       rebuildCache(env, "txtTocRule"),
       rebuildCache(env, "dictRule"),
     ]);
+
+    // 4. 清掉过期的 AI 段评。读过的章节不会再回头看，
+    // 留着只是让库越来越大、书目列表越来越长
+    try {
+      const retainDays = await loadRetainDays(env);
+      if (retainDays > 0) await purgeExpiredReviews(env, retainDays);
+      else console.log("Review purge disabled (review_retain_days=0)");
+    } catch (e) {
+      console.error("Review purge failed:", e);
+    }
 
     console.log("Scheduled tasks completed.");
   } catch (e) {

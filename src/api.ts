@@ -282,6 +282,8 @@ export interface ReviewConfig {
   hotspots: number;
   replyDepth: number;
   prefetch: number;
+  /** AI 段评保留天数，0 表示不自动清理 */
+  retainDays: number;
   personas: string[];
   defaultPersonas: string[];
   version: string;

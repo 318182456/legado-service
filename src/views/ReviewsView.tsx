@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck } from 'lucide-react';
+import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck, ChevronRight, ChevronDown } from 'lucide-react';
 import * as api from '../api';
 
 /** 按章节聚合，章节内按段号排序；缺少章节记录的归到「未知章节」 */
@@ -21,6 +21,8 @@ export default function ReviewsView() {
   const [books, setBooks] = useState<api.ReviewBook[]>([]);
   const [activeBook, setActiveBook] = useState<api.ReviewBook | null>(null);
   const [reviews, setReviews] = useState<api.ReviewItem[]>([]);
+  // 展开的章节标题集合。默认全部折叠，只列章节清单
+  const [openChapters, setOpenChapters] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
 
@@ -32,6 +34,7 @@ export default function ReviewsView() {
   const [hotspots, setHotspots] = useState('3');
   const [replyDepth, setReplyDepth] = useState('3');
   const [prefetch, setPrefetch] = useState('2');
+  const [retainDays, setRetainDays] = useState('30');
   const [personas, setPersonas] = useState('');
   const [reviewToken, setReviewToken] = useState('');
   const [autoFetch, setAutoFetch] = useState(true);
@@ -79,6 +82,7 @@ export default function ReviewsView() {
       setHotspots(String(cfg.hotspots));
       setReplyDepth(String(cfg.replyDepth));
       setPrefetch(String(cfg.prefetch));
+      setRetainDays(String(cfg.retainDays));
       setPersonas(cfg.personas.join('\n'));
       setAutoFetch(cfg.autoFetch);
       setReaderUrl(cfg.readerUrl);
@@ -106,12 +110,22 @@ export default function ReviewsView() {
     setActiveBook(book);
     setBookName(book.book_name);
     setBookAuthor(book.author || '');
+    setOpenChapters(new Set());
     try {
       const data = await api.getReviews(book.book_key);
       setReviews(data.reviews);
     } catch (e) {
       alert('获取评论失败: ' + String(e));
     }
+  };
+
+  const toggleChapter = (title: string) => {
+    setOpenChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
   };
 
   const handleSaveConfig = async () => {
@@ -124,6 +138,7 @@ export default function ReviewsView() {
         review_hotspots: hotspots,
         review_reply_depth: replyDepth,
         review_prefetch: prefetch,
+        review_retain_days: retainDays,
         review_personas: personas,
         review_auto_fetch: autoFetch ? '1' : '0',
         reader_url: readerUrl.trim().replace(/\/+$/, ''),
@@ -455,6 +470,19 @@ export default function ReviewsView() {
                   读到某章时顺带备好后面几章，翻页即有
                 </span>
               </Field>
+              <Field label="AI 段评保留天数（0 关闭）">
+                <input
+                  type="number"
+                  min={0}
+                  max={3650}
+                  value={retainDays}
+                  onChange={(e) => setRetainDays(e.target.value)}
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
+                />
+                <span className="text-xs text-secondary mt-1 block">
+                  定时任务会删掉超期的 AI 段评和空章节记录，自己发的批注不受影响
+                </span>
+              </Field>
             </div>
 
             <div className="border-t border-outline-variant pt-4">
@@ -733,11 +761,21 @@ export default function ReviewsView() {
             ) : (
               groupByChapter(reviews).map(([title, items]) => (
                 <div key={title}>
-                  <div className="px-5 py-2 bg-surface-container-low sticky top-0 flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium truncate">{title}</p>
+                  <button
+                    onClick={() => toggleChapter(title)}
+                    className="w-full px-5 py-2 bg-surface-container-low sticky top-0 flex items-center justify-between gap-2 hover:bg-surface-container text-left"
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {openChapters.has(title) ? (
+                        <ChevronDown size={14} className="shrink-0 text-secondary" />
+                      ) : (
+                        <ChevronRight size={14} className="shrink-0 text-secondary" />
+                      )}
+                      <span className="text-xs font-medium truncate">{title}</span>
+                    </span>
                     <span className="text-xs text-secondary shrink-0">{items.length} 条</span>
-                  </div>
-                  {items.map((r) => (
+                  </button>
+                  {openChapters.has(title) && items.map((r) => (
                     <div key={r.id} className="px-5 py-3 flex items-start gap-3 border-t border-outline-variant">
                       <span
                         className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${
