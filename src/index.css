@@ -59,8 +59,8 @@
 
   /* Custom Scrollbar Styling */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
 
   ::-webkit-scrollbar-track {
@@ -68,19 +68,22 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--color-outline-variant);
+    background: var(--color-outline);
     border-radius: 10px;
-    transition: all 0.3s ease;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition: background 0.2s ease;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-outline);
+    background: var(--color-on-surface-variant);
+    background-clip: content-box;
   }
 
   /* Firefox Support */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-outline-variant) transparent;
+    scrollbar-color: var(--color-outline) transparent;
   }
 }
 

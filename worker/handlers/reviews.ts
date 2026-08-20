@@ -1391,7 +1391,8 @@ export async function handleListReviews(env: Env, url: URL): Promise<Response> {
   const bookKey = url.searchParams.get("bookKey") ?? "";
   const chapterKey = url.searchParams.get("chapterKey") ?? "";
   const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 50;
+  // 固定 50 条时前几章就把一页占满，后面的章节被静默截断；改由调用方指定
+  const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get("limit") || "50")));
   const offset = (page - 1) * limit;
 
   const where: string[] = [];
@@ -1417,7 +1418,7 @@ export async function handleListReviews(env: Env, url: URL): Promise<Response> {
          LEFT JOIN review_chapters c
            ON c.book_key = r.book_key AND c.chapter_key = r.chapter_key
         ${clause.replace(/book_key/g, "r.book_key").replace(/chapter_key/g, "r.chapter_key")}
-        ORDER BY c.chapter_title, r.para_index, r.id LIMIT ? OFFSET ?`
+        ORDER BY c.id, r.para_index, r.id LIMIT ? OFFSET ?`
     )
       .bind(...params, limit, offset)
       .all(),

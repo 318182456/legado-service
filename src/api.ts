@@ -301,9 +301,9 @@ export const getReviewBooks = (page = 1) =>
     `/api/reviews/books?page=${page}`
   );
 
-export const getReviews = (bookKey = "", chapterKey = "", page = 1) =>
+export const getReviews = (bookKey = "", chapterKey = "", page = 1, limit = 50) =>
   apiFetch<{ reviews: ReviewItem[]; total: number; totalPages: number; page: number }>(
-    `/api/reviews?bookKey=${encodeURIComponent(bookKey)}&chapterKey=${encodeURIComponent(chapterKey)}&page=${page}`
+    `/api/reviews?bookKey=${encodeURIComponent(bookKey)}&chapterKey=${encodeURIComponent(chapterKey)}&page=${page}&limit=${limit}`
   );
 
 export const addReview = (data: {

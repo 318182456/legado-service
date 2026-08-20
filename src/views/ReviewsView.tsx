@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck, ChevronRight, ChevronDown } from 'lucide-react';
 import * as api from '../api';
 
+/** 每页评论条数。章节折叠后一页能列出不少章，200 足够一次看完大半本 */
+const REVIEW_PAGE_SIZE = 200;
+
 /** 按章节聚合，章节内按段号排序；缺少章节记录的归到「未知章节」 */
 function groupByChapter(list: api.ReviewItem[]): [string, api.ReviewItem[]][] {
   const map = new Map<string, api.ReviewItem[]>();
@@ -23,6 +26,10 @@ export default function ReviewsView() {
   const [reviews, setReviews] = useState<api.ReviewItem[]>([]);
   // 展开的章节标题集合。默认全部折叠，只列章节清单
   const [openChapters, setOpenChapters] = useState<Set<string>>(new Set());
+  // 评论分页：一本书的段评可上千条，一次全拉会拖慢首屏
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewTotal, setReviewTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
 
@@ -111,11 +118,34 @@ export default function ReviewsView() {
     setBookName(book.book_name);
     setBookAuthor(book.author || '');
     setOpenChapters(new Set());
+    setReviewPage(1);
+    setReviewTotal(0);
     try {
-      const data = await api.getReviews(book.book_key);
+      const data = await api.getReviews(book.book_key, '', 1, REVIEW_PAGE_SIZE);
       setReviews(data.reviews);
+      setReviewTotal(data.total);
     } catch (e) {
       alert('获取评论失败: ' + String(e));
+    }
+  };
+
+  const loadMoreReviews = async () => {
+    if (!activeBook || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = reviewPage + 1;
+      const data = await api.getReviews(activeBook.book_key, '', next, REVIEW_PAGE_SIZE);
+      // 按 id 去重：翻页期间若有新段评写入，偏移会错位造成重复
+      setReviews((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...data.reviews.filter((r) => !seen.has(r.id))];
+      });
+      setReviewTotal(data.total);
+      setReviewPage(next);
+    } catch (e) {
+      alert('加载更多失败: ' + String(e));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -307,7 +337,9 @@ export default function ReviewsView() {
     if (!confirm('确定删除这条评论吗？它的回复也会一并删除。')) return;
     try {
       await api.deleteReview(id);
-      setReviews((prev) => prev.filter((r) => r.id !== id && r.reply_to !== id));
+      const kept = reviews.filter((r) => r.id !== id && r.reply_to !== id);
+      setReviewTotal((t) => Math.max(0, t - (reviews.length - kept.length)));
+      setReviews(kept);
     } catch (e) {
       alert('删除失败: ' + String(e));
     }
@@ -804,6 +836,17 @@ export default function ReviewsView() {
                   ))}
                 </div>
               ))
+            )}
+            {activeBook && reviews.length < reviewTotal && (
+              <button
+                onClick={loadMoreReviews}
+                disabled={loadingMore}
+                className="w-full px-5 py-3 text-xs text-primary hover:bg-surface-container-low transition-colors disabled:opacity-50"
+              >
+                {loadingMore
+                  ? '加载中…'
+                  : `加载更多（已显示 ${reviews.length} / ${reviewTotal} 条）`}
+              </button>
             )}
           </div>
         </section>
