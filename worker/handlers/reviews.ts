@@ -47,7 +47,6 @@ import {
 
 const DETAIL_PAGE_SIZE = 20;
 const REPLY_PAGE_SIZE = 20;
-/** 单次同步生成的等待上限，超时后本章标记失败，不拖死书源请求 */
 const GENERATE_TIMEOUT_MS = 45_000;
 /** 内嵌回复的条数上限，超过则改由 getReviewReplies 分页拉取 */
 const INLINE_REPLY_LIMIT = 3;
@@ -56,7 +55,6 @@ const INLINE_REPLY_LIMIT = 3;
  * App 会缓存空结果且不再重试，等到就能当场返回，省去退出重进。
  * 上限要留在 AnalyzeUrl 的请求超时之内，超了不如转后台。
  */
-const SYNC_WAIT_MS = 20_000;
 
 // ─── 访问令牌 ─────────────────────────────────────────────────────
 
@@ -173,9 +171,12 @@ export async function handleReviewSummary(request: Request, env: Env): Promise<R
 
 
   // 是否生成由章节状态决定，不能看「有没有评论」——
-  // 否则一章只要先有了人工批注，AI 就永远轮不到生成
+  // 否则一章只要先有了人工批注，AI 就永远轮不到生成。
+  //
+  // 不等生成：调模型动辄十几秒，而 App 拉进度、同步书架都卡在
+  // 这个请求上，进度就一直对不上。先把现有结果返回，生成放后台。
   if (paragraphs.length) {
-    await generateIfNeeded(env, {
+    void generateIfNeeded(env, {
       bookKey,
       chapterKey,
       bookName,
@@ -259,32 +260,12 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       originUrl,
     };
 
-    // App 会把空结果也写进 reviewSummaryCache，之后同一章不再请求，
-    // 非得退出书架重进才刷新。所以首次请求时同步等一会儿：
-    // 赶得上就直接带着数据返回，赶不上再退回后台继续。
-    if (!list.length) {
-      const done = await Promise.race([
-        autoGenerateViaReader(env, task).then(() => true),
-        new Promise<boolean>((r) => setTimeout(() => r(false), SYNC_WAIT_MS)),
-      ]);
-      if (done) {
-        const fresh = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
-        console.log(
-          `[段评] 同步生成完成，本次响应直接带回 ${fresh.length} 段` +
-            `（《${bookName}》- ${chapterTitle}）`
-        );
-        void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
-        return json({ list: fresh });
-      }
-      console.log(
-        `[段评] ${SYNC_WAIT_MS / 1000}s 内未生成完，转后台继续` +
-          `（《${bookName}》- ${chapterTitle}）`
-      );
-    } else {
-      void autoGenerateViaReader(env, task);
-      // 本章已就绪，顺势把后面几章也备好
-      void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
-    }
+    // 生成一律走后台。以前这里同步等 20s，为的是首次就能带回数据
+    // （App 会把空结果写进 reviewSummaryCache，不退书架不刷新），
+    // 但代价是整个请求被阻塞 —— App 的进度同步也跟着卡住。
+    // 缓存那个问题改由预生成解决：读当前章时已经在备后面几章了。
+    void autoGenerateViaReader(env, task);
+    void schedulePrefetch(env, { bookKey, bookName, author, chapterTitle, bookUrl, originUrl });
   }
 
   return json({ list });
