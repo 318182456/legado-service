@@ -278,10 +278,13 @@ export async function fetchParagraphsViaReader(
   const index = matched.index;
   console.log(`[段评] 章节定位：${matched.how} → index=${index}「${toc[index]?.title}」`);
 
+  // cache=1 告诉 reader 这是缓存式读取，不要写阅读进度。
+  // 不带的话预生成逐章取正文会把进度一路推到最新一章，
+  // 还会同步到 WebDAV，App 下次打开就提示「云端进度超过当前进度」。
   const content = await readerPost(
     opts.readerUrl,
     "/getBookContent",
-    { url: opts.bookUrl, index, bookSource },
+    { url: opts.bookUrl, index, bookSource, cache: 1 },
     opts.accessToken
   );
 
