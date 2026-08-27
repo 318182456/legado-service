@@ -184,9 +184,16 @@ export function locate(
   const { target, before, after } = anchor;
   if (!target) return { index: -1, level: null };
 
-  // L1 全文一致
+  // L1 全文一致。
+  //
+  // byFull 的键是段落前 TARGET_LEN 字，target 存库时也截断到同样长度，
+  // 所以命中段落比 target 长时这只是「前 160 字相同」，不是全文相等 ——
+  // 长段被 App 拆开时，前半段必然满足这个条件，评论会被钉在前半段上。
+  // 这种情况留给下面的跨段判定，别在这里抢先返回。
   const exact = idx.byFull.get(target);
-  if (exact !== undefined) return { index: exact, level: "hash" };
+  if (exact !== undefined && idx.norms[exact].length <= target.length) {
+    return { index: exact, level: "hash" };
+  }
 
   // L2a 锚点被拆成了连续多段。
   //
@@ -202,7 +209,11 @@ export function locate(
   // L2b 首尾锚点：段首或段尾 40 字命中即可
   if (target.length >= MIN_ANCHOR_LEN) {
     const head = idx.byHead.get(target.slice(0, EDGE_LEN));
-    if (head !== undefined) return { index: head, level: "edge" };
+    if (head !== undefined) {
+      // 段首对上但该段比锚点长：原段很可能延续到后面，让评论来选
+      const refined = refineTruncatedHit(idx, head, target, commentText);
+      return { index: refined >= 0 ? refined : head, level: "edge" };
+    }
     const tail = idx.byTail.get(target.slice(-EDGE_LEN));
     if (tail !== undefined) return { index: tail, level: "edge" };
 
@@ -309,6 +320,55 @@ const SPAN_COVER = 0.85;
 /** 评论与各段相关度的最小区分度，拉不开就不猜 */
 const SPAN_MARGIN = 0.01;
 
+/**
+ * target 截断导致锚点只覆盖到长段的前半部分时，在「命中段 + 其后续段」
+ * 里靠评论内容重选。
+ *
+ * 服务端一个 300 字长段，锚点只存了前 160 字；App 把它拆成 180+120 两段。
+ * 锚点与前半段的前 160 字完全相同，任何基于 target 的比对都只会指向前半段，
+ * 而评论可能讲的是后半段。此时 target 里没有任何后半段的信息，只能看评论
+ * 与哪一段用词更近。区分度拉不开就返回 -1，维持原判 —— 宁可不动也不瞎挪。
+ */
+function refineTruncatedHit(
+  idx: ParagraphIndex,
+  hit: number,
+  target: string,
+  commentText?: string
+): number {
+  // 命中段没超过 target 长度，锚点是完整覆盖的，不存在这个问题
+  if (idx.norms[hit].length <= target.length) return -1;
+  if (!commentText) return -1;
+
+  const cg = bigrams(normalizeAnchorText(commentText));
+  if (!cg.size) return -1;
+
+  // 候选：命中段本身，加上紧随其后、可能属于同一原始段落的几段
+  const parts = [hit];
+  for (let j = hit + 1; j < idx.norms.length && parts.length < SPAN_MAX; j++) {
+    if (idx.norms[j].length < MIN_ANCHOR_LEN) break;
+    // 后续段落若能被 target 覆盖到，说明拆段边界还在 target 之内，
+    // locateSpan 已经处理过，这里只管 target 覆盖不到的部分
+    parts.push(j);
+  }
+  if (parts.length < 2) return -1;
+
+  let best = -1;
+  let bestScore = 0;
+  let runnerUp = 0;
+  for (const at of parts) {
+    const score = jaccard(cg, idx.grams[at]);
+    if (score > bestScore) {
+      runnerUp = bestScore;
+      bestScore = score;
+      best = at;
+    } else if (score > runnerUp) {
+      runnerUp = score;
+    }
+  }
+  if (best >= 0 && bestScore > 0 && bestScore - runnerUp >= SPAN_MARGIN) return best;
+  return -1;
+}
+
 function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): number {
   const cg = commentText ? bigrams(normalizeAnchorText(commentText)) : null;
 
@@ -326,8 +386,10 @@ function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): 
     // 整段相等交给 L1，这里只管真拆开的
     if (first === target) continue;
 
-    // target 可能反过来比请求方的段短（存库时截断到 TARGET_LEN），
-    // 那就不是拆段，交给 L2b 的子串判定
+    // target 截断到 TARGET_LEN 时，first 反而可能更长：一个 300 字的
+    // 长段被 App 拆成 180+120，前半段就比 160 字的 target 长。这仍然是
+    // 拆段，只是 target 不足以覆盖到第二段 —— 此时无从判断评论归属，
+    // 交给后面的级别处理，别在这里按「首段占字最多」草率选中前半段。
     if (first.length >= target.length) continue;
 
     let joined = first;
@@ -386,10 +448,18 @@ function locateSpan(idx: ParagraphIndex, target: string, commentText?: string): 
 
   // 反方向：请求方把好几段合成了一段，而锚点只对应其中一段。
   // 锚点存库时截断到 TARGET_LEN，所以这里拿 target 去合并段里找。
+  //
+  // 注意「n 比 target 长且包含 target」这个判据，在拆段时同样成立：
+  // 一个 300 字长段的锚点只存了前 160 字，App 把它拆成 175+125，
+  // 前半段就完全包含 target。两种相反的情形共享同一判据，光看长度
+  // 分不出来 —— 所以命中后再让评论内容裁一次，它更像后续段落就挪过去。
   for (let i = 0; i < idx.norms.length; i++) {
     const n = idx.norms[i];
     if (n.length <= target.length || n.length < MIN_ANCHOR_LEN) continue;
-    if (n.includes(target)) return i;
+    if (n.includes(target)) {
+      const refined = refineTruncatedHit(idx, i, target, commentText);
+      return refined >= 0 ? refined : i;
+    }
   }
   return -1;
 }
