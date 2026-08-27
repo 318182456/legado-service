@@ -80,12 +80,19 @@ export function cnToNumber(text: string): number | null {
   return seen ? total + section + num : null;
 }
 
+/** 全角数字转半角。有的源写「第１章」，不转的话编号解析不出来 */
+function toHalfWidthDigits(text: string): string {
+  return text.replace(/[０-９]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+  );
+}
+
 /**
  * 从章节标题里取出序号，中文数字与阿拉伯数字都认。
  * 小说站两种写法混用极常见，同一本书在 App 与 reader 里可能各用一种。
  */
 export function extractChapterNumber(title: string): number | null {
-  const t = String(title ?? "");
+  const t = toHalfWidthDigits(String(title ?? ""));
 
   const marked = t.match(new RegExp(`第\\s*([0-9]+|[${CN_NUM_CHARS}]+)\\s*[章节回话卷篇]`));
   if (marked) return cnToNumber(marked[1]);
@@ -98,7 +105,7 @@ export function extractChapterNumber(title: string): number | null {
 
 /** 去掉「第N章」前缀后的标题正文，用于跨编号写法比对 */
 export function chapterTitleBody(title: string): string {
-  const stripped = String(title ?? "").replace(
+  const stripped = toHalfWidthDigits(String(title ?? "")).replace(
     new RegExp(`^\\s*第\\s*(?:[0-9]+|[${CN_NUM_CHARS}]+)\\s*[章节回话卷篇]\\s*[:：、.]?\\s*`),
     ""
   );

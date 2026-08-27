@@ -43,6 +43,7 @@ import {
   clearReaderToken,
   matchChapter,
   extractChapterNumber,
+  chapterTitleBody,
 } from "../reader-content";
 
 /**
@@ -105,8 +106,19 @@ async function bookKeyOf(name: string, author: string): Promise<string> {
   return hashText(`${normalizeKeyText(name)}::${normalizeKeyText(author)}`);
 }
 
+/**
+ * 章节键。先把编号统一成阿拉伯数字，再算 hash。
+ *
+ * 同一章在 App 与 reader 里常常一个写「第1章 晓梦」、一个写「第一章 晓梦」，
+ * 只归一化空白和括号分不出它们是同一章 —— 两个 key、两条 review_chapters，
+ * 各生成一份段评：管理页里同一章重复出现，额度也白烧一遍。
+ *
+ * 解析不出编号的标题（「欢迎收藏」这类）按原样归一化，行为不变。
+ */
 async function chapterKeyOf(title: string): Promise<string> {
-  return hashText(normalizeKeyText(title));
+  const num = extractChapterNumber(title);
+  if (num === null) return hashText(normalizeKeyText(title));
+  return hashText(`${num}::${normalizeKeyText(chapterTitleBody(title))}`);
 }
 
 async function paraHashOf(text: string): Promise<string> {
