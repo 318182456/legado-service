@@ -178,7 +178,9 @@ const DEFAULT_CONFIG = {
   tipFooterLeft: 1,
   tipFooterMiddle: 0,
   tipFooterRight: 6,
-  tipColor: '#803E3D3B',
+  // 0 表示跟随正文色。半透明深灰压在深色背景图上会看不清页眉页脚，
+  // 而正文色是日夜感知的，跟随它在三种状态下都不会出错
+  tipColor: 0,
   textFont: '',
   bgAlpha: 100,
   letterSpacing: 0.05,
@@ -301,6 +303,8 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
           bgTypeEInk: 0,
           textColorEInk: cssToArgb(s.textColorEInk),
         };
+        // 页眉页脚色：模型留空表示跟随正文色，Legado 用 0 表示这个意思
+        next.tipColor = s.tipColor ? cssToArgb(s.tipColor) : 0;
         // 模型挑了背景图就用图，否则保持纯色
         if (s.bgImage) {
           next.bgStr = s.bgImage;

@@ -208,7 +208,7 @@ export interface ThemeSuggestion {
   bgStr: string; textColor: string;
   bgStrNight: string; textColorNight: string;
   bgStrEInk: string; textColorEInk: string;
-  textFont: string; bgImage: string; note: string;
+  textFont: string; bgImage: string; tipColor: string; note: string;
 }
 export const suggestTheme = (prompt: string) =>
   apiFetch<ThemeSuggestion>("/api/custom-themes/suggest", {

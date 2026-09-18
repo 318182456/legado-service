@@ -33,6 +33,8 @@ export interface ThemeSuggestion {
   textFont: string;
   /** 从 backgrounds 里挑的一项，可为空表示纯色 */
   bgImage: string;
+  /** 页眉页脚提示色（书名/章节名/进度）。留空表示跟随正文色 */
+  tipColor: string;
   /** 模型给的一句话说明，展示给用户 */
   note: string;
 }
@@ -57,6 +59,11 @@ function buildPrompt(input: ThemeSuggestInput): string {
 3. 日间：浅底深字。夜间：深底浅字，背景要足够暗（建议亮度低于 #202020）。
    墨水屏：必须是纯白底 #FFFFFF 配纯黑字 #000000，这是墨水屏设备的硬性要求，不要改。
 4. 三种状态要能看出是同一套主题的变体，色相上保持呼应。
+5. tipColor 是页眉页脚上书名、章节名、页码、进度的颜色。它只有一个值，
+   日间夜间共用，所以不要用只在某一种状态下才看得清的颜色。
+   拿不准就填空字符串，那样会自动跟随正文色，这在三种状态下都不会出错。
+   只有在你确信某个颜色在日间和夜间背景上都能看清时，才填具体值。
+   特别注意：背景图的边角常常比中间暗，页脚文字压在上面很容易看不清。
 
 可选字体（只能从下面挑一个，或留空字符串表示不指定）：
 ${fontList}
@@ -82,6 +89,7 @@ const RESPONSE_SCHEMA = {
     textColorEInk: { type: "string" },
     textFont: { type: "string" },
     bgImage: { type: "string" },
+    tipColor: { type: "string" },
     note: { type: "string" },
   },
   required: [
@@ -150,9 +158,22 @@ function normalize(raw: any, input: ThemeSuggestInput): ThemeSuggestion {
   const name = String(raw?.name ?? "").trim().slice(0, 20) || "AI 主题";
   const note = String(raw?.note ?? "").trim().slice(0, 200);
 
+  // tipColor 只有一个值、日夜共用，模型很容易给出只在一种状态下能看清的颜色。
+  // Legado 在 tipColor 为 0 时会跟随正文色，而正文色本身是日夜感知的，
+  // 所以只要模型给的颜色在日间或夜间任一侧对比度不达标，就退回跟随。
+  // 背景是图片时无从判断底色深浅，一律跟随，避免压在深色图上看不清。
+  let tipColor = "";
+  const tipRaw = typeof raw?.tipColor === "string" ? raw.tipColor.trim() : "";
+  if (HEX.test(tipRaw) && !bgImage) {
+    const okDay = contrast(bgStr, tipRaw) >= 3;
+    const okNight = contrast(bgStrNight, tipRaw) >= 3;
+    if (okDay && okNight) tipColor = tipRaw;
+  }
+
   return {
     name,
     bgStr,
+    tipColor,
     textColor: ensureContrast(bgStr, pick(raw?.textColor, "#3E3D3B")),
     bgStrNight,
     textColorNight: ensureContrast(bgStrNight, pick(raw?.textColorNight, "#ADADAD")),
