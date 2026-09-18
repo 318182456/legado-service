@@ -527,11 +527,33 @@ export async function handleSuggestTheme(request: Request, env: Env): Promise<Re
         if (item?.path && exts.test(item.path)) out.push(item.path);
       }
     }
-    return out.slice(0, 60); // prompt 里放太多会挤占上下文
+    return out;
   };
 
-  const fonts = collect(["fonts"], /\.(ttf|otf|ttc)$/i);
-  const backgrounds = collect(["themes", "layouts", "bg", "backgrounds"], /\.(png|jpe?g|webp)$/i);
+  /**
+   * 资源索引是按文件名排序的，直接截前 N 个会让模型只看到开头那一段
+   * （字体有 146 个，楷书宋体明朝体全排在 60 名开外，等于永远选不到）。
+   * 同一字族的多个字重（仓耳非白 W01~W05）先收敛成一个，再在全表上均匀取样。
+   */
+  const sample = (list: string[], limit: number) => {
+    const byFamily = new Map<string, string>();
+    for (const path of list) {
+      // 去掉目录、扩展名和结尾的字重后缀，得到字族名
+      const base = path.split("/").pop()!.replace(/\.[^.]+$/, "");
+      const family = base
+        .replace(/[ _-]?(W\d{1,2}|Bold|SemiBold|ExtraBold|Medium|Regular|Light|ExtraLight|Thin|Heavy|[BHLMRSE])$/i, "")
+        .trim() || base;
+      if (!byFamily.has(family)) byFamily.set(family, path);
+    }
+    const uniq = [...byFamily.values()];
+    if (uniq.length <= limit) return uniq;
+    // 等距取样，保证开头中间结尾都能被模型看到
+    const step = uniq.length / limit;
+    return Array.from({ length: limit }, (_, i) => uniq[Math.floor(i * step)]);
+  };
+
+  const fonts = sample(collect(["fonts"], /\.(ttf|otf|ttc)$/i), 70);
+  const backgrounds = sample(collect(["themes", "layouts", "bg", "backgrounds"], /\.(png|jpe?g|webp)$/i), 50);
 
   try {
     const { suggestTheme } = await import("../theme-ai");

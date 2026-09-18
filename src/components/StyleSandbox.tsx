@@ -172,12 +172,13 @@ const DEFAULT_CONFIG = {
   footerPaddingRight: 24,
   showHeaderLine: false,
   showFooterLine: true,
-  tipHeaderLeft: 2, 
+  // 书名章节名放页眉，页脚留给页码进度和时间电量
+  tipHeaderLeft: 1,    // 章节名
   tipHeaderMiddle: 0,
-  tipHeaderRight: 3, 
-  tipFooterLeft: 1,
+  tipHeaderRight: 7,   // 书名
+  tipFooterLeft: 6,    // 页码+进度
   tipFooterMiddle: 0,
-  tipFooterRight: 6,
+  tipFooterRight: 9,   // 时间+电量%
   // 0 表示跟随正文色。半透明深灰压在深色背景图上会看不清页眉页脚，
   // 而正文色是日夜感知的，跟随它在三种状态下都不会出错
   tipColor: 0,
