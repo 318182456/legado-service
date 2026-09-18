@@ -256,6 +256,11 @@ export default {
         return assets.handleDeleteCustomTheme(id, env);
       }
 
+      if (path === "/api/custom-themes/suggest" && method === "POST") {
+        if (!auth.isAuthed(request, env)) return err("Unauthorized", 401);
+        return assets.handleSuggestTheme(request, env);
+      }
+
       const themeExportMatch = path.match(/^\/api\/custom-themes\/(\d+)\/export$/);
       if (themeExportMatch && method === "GET") {
         return assets.handleExportCustomTheme(request, env, themeExportMatch[1]);

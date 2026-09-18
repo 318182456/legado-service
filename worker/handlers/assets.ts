@@ -507,3 +507,39 @@ export async function handleExtractAssetFromZip(request: Request, env: Env): Pro
 }
 
 
+
+/**
+ * AI 配色助手：按一句话描述生成一套三态主题，供样式实验室预填。
+ * 只返回建议，不落库——用户在实验室里调完再自行保存。
+ */
+export async function handleSuggestTheme(request: Request, env: Env): Promise<Response> {
+  const body = await request.json().catch(() => ({})) as any;
+  const prompt = String(body?.prompt ?? "").trim();
+  if (!prompt) return err("请描述想要的主题");
+
+  // 从资源索引里取真实存在的字体与背景，避免模型编造文件名
+  const raw = await env.KV.get("resources-index");
+  const index = raw ? JSON.parse(raw) : {};
+  const collect = (cats: string[], exts: RegExp) => {
+    const out: string[] = [];
+    for (const cat of cats) {
+      for (const item of (index[cat] ?? []) as any[]) {
+        if (item?.path && exts.test(item.path)) out.push(item.path);
+      }
+    }
+    return out.slice(0, 60); // prompt 里放太多会挤占上下文
+  };
+
+  const fonts = collect(["fonts"], /\.(ttf|otf|ttc)$/i);
+  const backgrounds = collect(["themes", "layouts", "bg", "backgrounds"], /\.(png|jpe?g|webp)$/i);
+
+  try {
+    const { suggestTheme } = await import("../theme-ai");
+    const suggestion = await suggestTheme(env, { prompt, fonts, backgrounds });
+    return new Response(JSON.stringify({ ok: true, data: suggestion }), {
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  } catch (e) {
+    return err(`生成失败: ${(e as Error).message}`, 500);
+  }
+}

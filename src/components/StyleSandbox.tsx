@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   Zap, AlignLeft, ImageIcon, Type as FontIcon, Palette, 
   Layout, Type, Settings2, RefreshCw, Share2, ChevronRight,
-  FileText, X
+  FileText, X, Sparkles, Loader2
 } from 'lucide-react';
 import * as api from '../api';
 import { Slider } from './Slider';
@@ -262,6 +262,10 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     return '';
   });
   const [showPicker, setShowPicker] = useState<'font' | 'bg' | 'layout' | null>(null);
+  // AI 配色助手
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiNote, setAiNote] = useState('');
   // 配色编辑模式：Legado 有日间/夜间/墨水屏三套
   const [colorMode, setColorMode] = useState<'day' | 'night' | 'eink'>('day');
   // 各模式对应的字段后缀
@@ -275,6 +279,46 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     (config['textColor' + sfx] ?? config.textColor) !== config.textColor ||
     (config['bgType' + sfx] ?? config.bgType) !== config.bgType
   );
+  // AI 出的方案只预填进 config，不自动保存，留给用户继续调
+  const applyAiSuggestion = async () => {
+    const q = aiPrompt.trim();
+    if (!q || aiLoading) return;
+    setAiLoading(true);
+    setAiNote('');
+    try {
+      const s = await api.suggestTheme(q);
+      setConfig((prev: any) => {
+        const next = {
+          ...prev,
+          name: s.name || prev.name,
+          bgStr: cssToArgb(s.bgStr),
+          bgType: 0,
+          textColor: cssToArgb(s.textColor),
+          bgStrNight: cssToArgb(s.bgStrNight),
+          bgTypeNight: 0,
+          textColorNight: cssToArgb(s.textColorNight),
+          bgStrEInk: cssToArgb(s.bgStrEInk),
+          bgTypeEInk: 0,
+          textColorEInk: cssToArgb(s.textColorEInk),
+        };
+        // 模型挑了背景图就用图，否则保持纯色
+        if (s.bgImage) {
+          next.bgStr = s.bgImage;
+          next.bgType = 2;
+        }
+        if (s.textFont) next.textFont = s.textFont;
+        return next;
+      });
+      if (s.bgImage) setManualAssets(p => ({ ...p, bg: true }));
+      if (s.textFont) setManualAssets(p => ({ ...p, font: true }));
+      setAiNote(s.note || '已生成');
+    } catch (e) {
+      setAiNote('生成失败: ' + String((e as Error).message || e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const [resources, setResources] = useState<any>(null);
   const [bgImageObj, setBgImageObj] = useState<HTMLImageElement | null>(null);
   const [fontBase64, setFontBase64] = useState('');
@@ -858,6 +902,34 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
               <div className="space-y-3">
                 <label className="text-[10px] font-bold text-outline uppercase tracking-wider">色彩与资源</label>
                 <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant space-y-4">
+                  <div className="space-y-2 pb-3 border-b border-outline-variant">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-primary">
+                      <Sparkles size={12} /> AI 配色助手
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') applyAiSuggestion(); }}
+                        placeholder="描述想要的主题，如：护眼的墨绿色"
+                        className="flex-1 bg-surface-container border border-outline-variant rounded-xl px-3 py-2 text-[11px] outline-none focus:border-primary"
+                      />
+                      <button
+                        onClick={applyAiSuggestion}
+                        disabled={aiLoading || !aiPrompt.trim()}
+                        className="px-3 py-2 rounded-xl bg-primary text-on-primary text-[11px] font-bold disabled:opacity-40 flex items-center gap-1.5"
+                      >
+                        {aiLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                        {aiLoading ? '生成中' : '生成'}
+                      </button>
+                    </div>
+                    {aiNote && (
+                      <div className="text-[10px] text-outline leading-relaxed">{aiNote}</div>
+                    )}
+                    <div className="text-[9px] text-outline opacity-60">
+                      生成结果只预填到下方，确认满意再保存
+                    </div>
+                  </div>
                   <div className="flex gap-1 p-1 bg-surface-container rounded-xl">
                     {([['day', '日间'], ['night', '夜间'], ['eink', '墨水屏']] as const).map(([mode, label]) => (
                       <button

@@ -203,6 +203,19 @@ export const saveCustomTheme = (data: { name: string; config: string; preview_ur
 export const deleteCustomTheme = (id: number) => 
   apiFetch<any>(`/api/custom-themes/${id}`, { method: "DELETE" });
 
+export interface ThemeSuggestion {
+  name: string;
+  bgStr: string; textColor: string;
+  bgStrNight: string; textColorNight: string;
+  bgStrEInk: string; textColorEInk: string;
+  textFont: string; bgImage: string; note: string;
+}
+export const suggestTheme = (prompt: string) =>
+  apiFetch<ThemeSuggestion>("/api/custom-themes/suggest", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+
 export const ensureAsset = async (file: Blob, category: string, name: string) => {
   const formData = new FormData();
   formData.append('file', file);
