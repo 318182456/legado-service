@@ -35,6 +35,19 @@ export interface ThemeSuggestion {
   bgImage: string;
   /** 页眉页脚提示色（书名/章节名/进度）。留空表示跟随正文色 */
   tipColor: string;
+  /** 排版：字号 sp */
+  textSize: number;
+  /** 排版：行间距，实验室滑块口径 10~50 */
+  lineSpacingExtra: number;
+  /** 排版：段距 0~50 */
+  paragraphSpacing: number;
+  /** 排版：字距 0~1 */
+  letterSpacing: number;
+  /** 排版：左右页边距 dp */
+  paddingLeft: number;
+  paddingRight: number;
+  /** 正文加粗 0 常规 / 1 加粗 */
+  textBold: number;
   /** 模型给的一句话说明，展示给用户 */
   note: string;
 }
@@ -77,7 +90,18 @@ ${bgList}
 name 给一个 2-6 字的中文主题名。note 用一句话说明配色思路。
 
 页眉页脚的内容排布不用你管，已按固定习惯设好：书名和章节名在页眉，
-页码进度和时间电量在页脚。你只需要给配色。`;
+页码进度和时间电量在页脚。
+
+除配色外还要给排版，取值范围如下，超出会被截断：
+- textSize 字号 12~40，常规阅读 20~24，想要疏朗些可以到 26
+- lineSpacingExtra 行间距 10~50，这里 10 表示 0 倍、20 表示 1 倍，
+  正文阅读建议 20~32，古典/舒缓风格可以更大
+- paragraphSpacing 段距 0~50，建议 5~20
+- letterSpacing 字距 0~1，中文正文建议 0~0.1，超过 0.2 会松散得难读
+- paddingLeft / paddingRight 左右边距 0~100，建议 16~32
+- textBold 正文粗细，0 常规、1 加粗。深色底浅色字时适当加粗更清晰
+
+排版要和主题气质相称：古典舒缓的多留白、行距大；紧凑高效的边距小、行距适中。`;
 }
 
 const RESPONSE_SCHEMA = {
@@ -93,6 +117,13 @@ const RESPONSE_SCHEMA = {
     textFont: { type: "string" },
     bgImage: { type: "string" },
     tipColor: { type: "string" },
+    textSize: { type: "number" },
+    lineSpacingExtra: { type: "number" },
+    paragraphSpacing: { type: "number" },
+    letterSpacing: { type: "number" },
+    paddingLeft: { type: "number" },
+    paddingRight: { type: "number" },
+    textBold: { type: "number" },
     note: { type: "string" },
   },
   required: [
@@ -173,10 +204,24 @@ function normalize(raw: any, input: ThemeSuggestInput): ThemeSuggestion {
     if (okDay && okNight) tipColor = tipRaw;
   }
 
+  // 排版参数逐项夹到实验室滑块的取值范围内，模型给超了或没给都不会崩
+  const num = (v: unknown, min: number, max: number, fallback: number) => {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+
   return {
     name,
     bgStr,
     tipColor,
+    textSize: Math.round(num(raw?.textSize, 12, 40, 22)),
+    lineSpacingExtra: Math.round(num(raw?.lineSpacingExtra, 10, 50, 20)),
+    paragraphSpacing: Math.round(num(raw?.paragraphSpacing, 0, 50, 5)),
+    letterSpacing: Math.round(num(raw?.letterSpacing, 0, 1, 0.05) * 100) / 100,
+    paddingLeft: Math.round(num(raw?.paddingLeft, 0, 100, 16)),
+    paddingRight: Math.round(num(raw?.paddingRight, 0, 100, 16)),
+    textBold: num(raw?.textBold, 0, 1, 0) >= 0.5 ? 1 : 0,
     textColor: ensureContrast(bgStr, pick(raw?.textColor, "#3E3D3B")),
     bgStrNight,
     textColorNight: ensureContrast(bgStrNight, pick(raw?.textColorNight, "#ADADAD")),

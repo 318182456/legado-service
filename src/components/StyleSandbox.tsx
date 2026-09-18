@@ -306,6 +306,14 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
         };
         // 页眉页脚色：模型留空表示跟随正文色，Legado 用 0 表示这个意思
         next.tipColor = s.tipColor ? cssToArgb(s.tipColor) : 0;
+        // 排版
+        next.textSize = s.textSize;
+        next.lineSpacingExtra = s.lineSpacingExtra;
+        next.paragraphSpacing = s.paragraphSpacing;
+        next.letterSpacing = s.letterSpacing;
+        next.paddingLeft = s.paddingLeft;
+        next.paddingRight = s.paddingRight;
+        next.textBold = s.textBold;
         // 模型挑了背景图就用图，否则保持纯色
         if (s.bgImage) {
           next.bgStr = s.bgImage;
