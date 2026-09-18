@@ -184,8 +184,43 @@ const DEFAULT_CONFIG = {
   letterSpacing: 0.05,
   textBold: 0,
   darkStatusIcon: true,
-  pageAnim: 2
+  pageAnim: 2,
+  // 夜间模式配色。Legado 在同一个 Config 对象内用 *Night 后缀字段区分日夜，
+  // 切夜间时只换读哪个字段，不换配置对象。
+  bgStrNight: '#000000',
+  bgTypeNight: 0,
+  textColorNight: '#ADADAD',
+  darkStatusIconNight: false,
+  // 墨水屏配色
+  bgStrEInk: '#FFFFFF',
+  bgTypeEInk: 0,
+  textColorEInk: '#000000',
+  darkStatusIconEInk: true
 };
+
+// 未单独设置夜间/墨水屏配色时，沿用日间的这几项。
+// 注意 Legado 的 Gson 未启用 Kotlin 默认值，缺字段会反序列化成 null/0 而不是默认值，
+// 所以导出时这些字段必须显式写全，不能省略。
+const VARIANT_FALLBACK: Record<string, string> = {
+  bgStrNight: 'bgStr',
+  bgTypeNight: 'bgType',
+  textColorNight: 'textColor',
+  darkStatusIconNight: 'darkStatusIcon',
+  bgStrEInk: 'bgStr',
+  bgTypeEInk: 'bgType',
+  textColorEInk: 'textColor',
+  darkStatusIconEInk: 'darkStatusIcon'
+};
+
+export function applyNightFallback(cfg: any) {
+  const next = { ...cfg };
+  for (const [nightKey, dayKey] of Object.entries(VARIANT_FALLBACK)) {
+    if (next[nightKey] === undefined || next[nightKey] === null || next[nightKey] === '') {
+      next[nightKey] = next[dayKey];
+    }
+  }
+  return next;
+}
 
 export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileTree }: { initialBase: any; initialType: 'theme' | 'font' | 'zip' | 'saved' | 'image' | 'bg' | 'blank'; onClose: () => void; onSaved: () => void; fileTree: any }) {
   const [config, setConfig] = useState<any>(() => {
@@ -227,6 +262,19 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     return '';
   });
   const [showPicker, setShowPicker] = useState<'font' | 'bg' | 'layout' | null>(null);
+  // 配色编辑模式：Legado 有日间/夜间/墨水屏三套
+  const [colorMode, setColorMode] = useState<'day' | 'night' | 'eink'>('day');
+  // 各模式对应的字段后缀
+  const SUFFIX = { day: '', night: 'Night', eink: 'EInk' } as const;
+  const sfx = SUFFIX[colorMode];
+  // 取当前模式下的字段值，未设置时回退到日间值
+  const curVal = (base: string) => colorMode === 'day' ? config[base] : (config[base + sfx] ?? config[base]);
+  // 该模式是否已与日间不同。相同则视为「未单独设置」，导出时按日间值补齐
+  const variantCustomized = colorMode !== 'day' && (
+    (config['bgStr' + sfx] ?? config.bgStr) !== config.bgStr ||
+    (config['textColor' + sfx] ?? config.textColor) !== config.textColor ||
+    (config['bgType' + sfx] ?? config.bgType) !== config.bgType
+  );
   const [resources, setResources] = useState<any>(null);
   const [bgImageObj, setBgImageObj] = useState<HTMLImageElement | null>(null);
   const [fontBase64, setFontBase64] = useState('');
@@ -700,7 +748,8 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
 
       setSyncStatus('正在保存主题配置...');
       // 👑 修正：清理配置中的冗余预览字段，避免 JSON 嵌套过深
-      const configToSave = { ...finalConfig };
+      // 未单独设置夜间配色的项，用日间值补齐，保证导出的 JSON 始终带全 *Night 字段
+      const configToSave = applyNightFallback(finalConfig);
       delete (configToSave as any).preview_url;
       
       const payload: any = { 
@@ -809,9 +858,60 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
               <div className="space-y-3">
                 <label className="text-[10px] font-bold text-outline uppercase tracking-wider">色彩与资源</label>
                 <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant space-y-4">
+                  <div className="flex gap-1 p-1 bg-surface-container rounded-xl">
+                    {([['day', '日间'], ['night', '夜间'], ['eink', '墨水屏']] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        onClick={() => setColorMode(mode)}
+                        className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all ${colorMode === mode ? 'bg-primary text-on-primary' : 'text-secondary hover:bg-surface-container-high'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {colorMode !== 'day' && !variantCustomized && (
+                    <div className="text-[10px] text-outline leading-relaxed">
+                      未单独设置，当前沿用日间配色。修改下方任一项即可单独配色。
+                    </div>
+                  )}
+                  {colorMode !== 'day' && variantCustomized && (
+                    <button
+                      onClick={() => setConfig({ ...config, ['bgStr' + sfx]: config.bgStr, ['bgType' + sfx]: config.bgType, ['textColor' + sfx]: config.textColor, ['darkStatusIcon' + sfx]: config.darkStatusIcon })}
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      恢复为跟随日间配色
+                    </button>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5"><span className="text-[10px] text-secondary">背景色</span><input type="color" value={getHex6(config.bgStr)} onChange={(e) => { setConfig({...config, bgStr: cssToArgb(e.target.value), bgType: 0}); setManualAssets(p => ({ ...p, bg: true })); }} className="w-full h-10 rounded-xl cursor-pointer p-1 bg-surface-container" /></div>
-                    <div className="space-y-1.5"><span className="text-[10px] text-secondary">文字色</span><input type="color" value={getHex6(config.textColor)} onChange={(e) => setConfig({...config, textColor: cssToArgb(e.target.value)})} className="w-full h-10 rounded-xl cursor-pointer p-1 bg-surface-container" /></div>
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] text-secondary">背景色</span>
+                      <input
+                        type="color"
+                        value={getHex6(curVal('bgStr'))}
+                        onChange={(e) => {
+                          if (colorMode !== 'day') {
+                            setConfig({ ...config, ['bgStr' + sfx]: cssToArgb(e.target.value), ['bgType' + sfx]: 0 });
+                          } else {
+                            setConfig({ ...config, bgStr: cssToArgb(e.target.value), bgType: 0 });
+                            setManualAssets(p => ({ ...p, bg: true }));
+                          }
+                        }}
+                        className="w-full h-10 rounded-xl cursor-pointer p-1 bg-surface-container"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] text-secondary">文字色</span>
+                      <input
+                        type="color"
+                        value={getHex6(curVal('textColor'))}
+                        onChange={(e) => setConfig(
+                          colorMode !== 'day'
+                            ? { ...config, ['textColor' + sfx]: cssToArgb(e.target.value) }
+                            : { ...config, textColor: cssToArgb(e.target.value) }
+                        )}
+                        className="w-full h-10 rounded-xl cursor-pointer p-1 bg-surface-container"
+                      />
+                    </div>
                   </div>
                   <div className="flex flex-col gap-3 pt-2">
                     <button onClick={() => setShowPicker('layout')} className="flex items-center gap-4 p-4 bg-surface-container rounded-2xl text-sm font-bold text-primary hover:bg-primary/10 border border-primary/20 transition-all group">

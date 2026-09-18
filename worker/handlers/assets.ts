@@ -332,12 +332,6 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
   if (config.bgType === 2 && config.bgStr) {
     tasks.push(processResource(config.bgStr, 'bg').then(v => config.bgStr = v));
   }
-  if (config.bgTypeNight === 2 && config.bgStrNight) {
-    tasks.push(processResource(config.bgStrNight, 'bg').then(v => config.bgStrNight = v));
-  }
-  if (config.bgTypeEInk === 2 && config.bgStrEInk) {
-    tasks.push(processResource(config.bgStrEInk, 'bg').then(v => config.bgStrEInk = v));
-  }
 
   // 并行等待所有资源处理完成
   await Promise.all(tasks);
@@ -345,7 +339,38 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
   // 3. 清理非标准字段
   delete config.preview_url;
 
-  // 4. 添加 JSON 配置
+  // 4. 补齐夜间 / 墨水屏字段。
+  // Legado 的 Gson 未启用 Kotlin 默认值，缺失字段会反序列化成 null/0 而非构造函数默认值，
+  // 其中 textColorNight 没有兜底逻辑，缺失会导致夜间取色失败。
+  // 旧版本保存的主题不含 *Night / *EInk 字段，这里统一按日间值补齐。
+  const variantFallback: Record<string, string> = {
+    bgStrNight: 'bgStr',
+    bgTypeNight: 'bgType',
+    textColorNight: 'textColor',
+    darkStatusIconNight: 'darkStatusIcon',
+    bgStrEInk: 'bgStr',
+    bgTypeEInk: 'bgType',
+    textColorEInk: 'textColor',
+    darkStatusIconEInk: 'darkStatusIcon'
+  };
+  for (const [nightKey, dayKey] of Object.entries(variantFallback)) {
+    if (config[nightKey] === undefined || config[nightKey] === null || config[nightKey] === '') {
+      config[nightKey] = config[dayKey];
+    }
+  }
+
+  // 5. 补齐后再处理夜间/墨水屏背景图，确保单独设置的图片也能打进 ZIP。
+  // 与日间同值的说明是上面回退来的，日间那轮已处理并入包，跳过避免重复查 R2。
+  const nightTasks: Promise<any>[] = [];
+  if (config.bgTypeNight === 2 && config.bgStrNight && config.bgStrNight !== config.bgStr) {
+    nightTasks.push(processResource(config.bgStrNight, 'bg').then(v => config.bgStrNight = v));
+  }
+  if (config.bgTypeEInk === 2 && config.bgStrEInk && config.bgStrEInk !== config.bgStr) {
+    nightTasks.push(processResource(config.bgStrEInk, 'bg').then(v => config.bgStrEInk = v));
+  }
+  await Promise.all(nightTasks);
+
+  // 6. 添加 JSON 配置
   zip.addFile('readConfig.json', JSON.stringify(config, null, 2));
 
   return new Response(zip.generate() as any, {
