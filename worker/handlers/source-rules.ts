@@ -1,5 +1,3 @@
-import { parseHTML } from 'linkedom/worker';
-
 class UnsupportedRule extends Error {}
 
 /** 仅解释静态规则；不执行订阅里的 JS，也不把字符串命中当作解析成功。 */
@@ -65,14 +63,15 @@ function field(root: any, rule: string, json: boolean): string {
   return '';
 }
 
-export function extractSearchBooks(text: string, contentType: string, rules: any, baseUrl: string): {
+export async function extractSearchBooks(text: string, contentType: string, rules: any, baseUrl: string): Promise<{
   supported: boolean; books: { name: string; url: string }[]; matched: number;
-} {
+}> {
   if (!rules || typeof rules.bookList !== 'string' || !rules.bookList.trim()) return { supported: false, books: [], matched: 0 };
   if (/@js:|<js>|##|&&|%%/i.test(rules.bookList)) return { supported: false, books: [], matched: 0 };
   const json = /json/i.test(contentType) || /^[\s\uFEFF]*[\[{]/.test(text);
   try {
-    const root = json ? JSON.parse(text.replace(/^\uFEFF/, '')) : parseHTML(text).document;
+    // 旧容器的依赖卷可能尚未同步。解析器只在 HTML 静态检测时加载，缺失则待确认，不能阻止服务启动。
+    const root = json ? JSON.parse(text.replace(/^\uFEFF/, '')) : (await import('linkedom/worker')).parseHTML(text).document;
     let nodes: any[] = [];
     for (const rule of rules.bookList.split('||')) {
       nodes = json ? jsonValues(root, rule).flatMap(v => Array.isArray(v) ? v : [v]) : htmlNodes(root, rule);

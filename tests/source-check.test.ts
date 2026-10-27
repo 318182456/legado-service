@@ -22,9 +22,9 @@ test('静态 HTML 必须真实匹配元素，并解析出书名和 HTTP 书籍�
   assert.equal((await check()).verdict, 'unavailable');
 });
 
-test('默认 class/tag 链、排除索引及备选规则按实际节点工作', () => {
+test('默认 class/tag 链、排除索引及备选规则按实际节点工作', async () => {
   const rules = { bookList: 'class.missing||class.grid@tag.tr!0', name: 'tag.td.0@a@text', bookUrl: 'tag.a.0@href' };
-  const result = extractSearchBooks('<table class="grid"><tr><td>标题</td></tr><tr><td><a href="/b/1">书名</a></td></tr></table>', 'text/html', rules, 'https://source.invalid/search');
+  const result = await extractSearchBooks('<table class="grid"><tr><td>标题</td></tr><tr><td><a href="/b/1">书名</a></td></tr></table>', 'text/html', rules, 'https://source.invalid/search');
   assert.deepEqual(result.books, [{ name: '书名', url: 'https://source.invalid/b/1' }]);
 });
 

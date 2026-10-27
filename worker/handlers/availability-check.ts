@@ -98,7 +98,7 @@ export async function checkBookSource(
   const redirectOutcome = classifyRedirect(res);
   if (redirectOutcome) return redirectOutcome;
 
-  const result = classifyContent(src, text, res, req);
+  const result = await classifyContent(src, text, res, req);
   return options.depth === 'content' && result.verdict === 'available'
     ? skipped('reader-required', '静态搜索已验证，正文检测需要 reader') : result;
 }
@@ -377,14 +377,14 @@ function classifyRedirect(res: Response): CheckOutcome | null {
   return null;
 }
 
-function classifyContent(
+async function classifyContent(
   src: any,
   text: string,
   res: Response,
   req: SearchRequest
-): CheckOutcome {
+): Promise<CheckOutcome> {
   if (!text.trim()) return skipped("empty-body", "返回空内容，请复检");
-  const result = extractSearchBooks(text, res.headers.get('content-type') || '', src.ruleSearch, res.url || req.url);
+  const result = await extractSearchBooks(text, res.headers.get('content-type') || '', src.ruleSearch, res.url || req.url);
   if (!result.supported) return skipped('rule-unsupported', '静态规则无法完整解释，请配置 reader 检测');
   if (result.books.length) return available('search-verified', res.status, `实际解析出 ${result.books.length} 个书名及书籍地址，正文未测`);
   if (!result.matched) return skipped('empty-result', '测试关键词没有匹配结果，请复检');

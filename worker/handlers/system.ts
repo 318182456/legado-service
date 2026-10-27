@@ -3,6 +3,7 @@ import { Env } from "../types";
 import path from "path";
 import fs from "fs-extra";
 import { unzipSync } from "fflate";
+import { ensureRuntimeDependencies } from "../../runtime-dependencies.mjs";
 
 const GITHUB_REPO = "318182456/legado-service"; // 请确认您的仓库地址
 export async function handleGetVersion(env: Env) {
@@ -103,14 +104,14 @@ export async function handlePerformUpdate(env: Env) {
       }
     }
     
-    try {
-      console.log("Compiling frontend assets...");
-      const { execSync } = await import("child_process");
-      execSync("npm run build", { cwd: projectRoot });
-      console.log("Frontend assets compiled successfully!");
-    } catch (buildErr) {
-      console.error("Frontend build failed:", buildErr);
-    }
+    // 先同步依赖再构建，任一步失败均保留当前进程并返回错误，避免重启后缺包。
+    ensureRuntimeDependencies(projectRoot);
+    console.log("Compiling frontend assets...");
+    const { execFileSync } = await import("child_process");
+    execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], {
+      cwd: projectRoot, stdio: "inherit", timeout: 10 * 60 * 1000, shell: process.platform === "win32",
+    });
+    console.log("Frontend assets compiled successfully!");
     
     console.log("Update applied successfully. Restarting...");
     

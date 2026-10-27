@@ -4,16 +4,19 @@ WORKDIR /app
 
 # 1. 复制依赖清单
 COPY package*.json ./
+COPY runtime-dependencies.mjs docker-entrypoint.mjs /usr/local/lib/legado/
 
 # 2. 安装全量依赖（包含 Vite 和 TypeScript），以支持容器内网页在线更新编译
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm ci --include=dev --no-audit --no-fund && \
+    node --input-type=module -e "import { markRuntimeDependencies } from '/usr/local/lib/legado/runtime-dependencies.mjs'; markRuntimeDependencies('/app');"
 
 # 3. 复制宿主机预编译的静态资源与服务器代码
 COPY dist ./dist
 COPY worker ./worker
 COPY adapter ./adapter
 COPY entry.node.ts tsconfig.json VERSION ./
+COPY runtime-dependencies.mjs ./
 
 # 4. 全局安装 tsx 用于直接运行 typescript，同样利用缓存
 RUN --mount=type=cache,target=/root/.npm \
@@ -21,4 +24,5 @@ RUN --mount=type=cache,target=/root/.npm \
 
 EXPOSE 3000
 
+ENTRYPOINT ["node", "/usr/local/lib/legado/docker-entrypoint.mjs"]
 CMD ["tsx", "entry.node.ts"]
