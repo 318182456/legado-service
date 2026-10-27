@@ -559,6 +559,7 @@ export async function ensureDatabase(env: Env): Promise<void> {
         try {
           // 快速检查核心表
           await env.DB.prepare("SELECT 1 FROM subscriptions LIMIT 1").run();
+          await env.DB.prepare("SELECT 1 FROM source_checks LIMIT 1").run();
           schemaVerified = true;
           return;
         } catch (e) {

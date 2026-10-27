@@ -3,7 +3,7 @@ import {
   err,
   checkAuth,
 } from "../utils";
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 
 
 export async function handleRepoProxy(request: Request, env: Env): Promise<Response> {
@@ -160,119 +160,13 @@ export async function handleDeleteCustomTheme(id: number, env: Env): Promise<Res
 
 // ---------- ZIP 导出逻辑 (极简 Store 模式) ----------
 
+/** 使用现有 ZIP 库处理 UTF-8 文件名和字节偏移，避免中文资源生成损坏的包。 */
 class ZipWriter {
-  private entries: { name: string; data: Uint8Array; crc: number; offset: number }[] = [];
-  private offset = 0;
-
-  private crc32(data: Uint8Array): number {
-    let crc = 0xFFFFFFFF;
-    const table = this.getCrcTable();
-    for (let i = 0; i < data.length; i++) {
-      crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xFF];
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-
-  private _crcTable: Int32Array | null = null;
-  private getCrcTable() {
-    if (this._crcTable) return this._crcTable;
-    const table = new Int32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let j = 0; j < 8; j++) {
-        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      }
-      table[i] = c;
-    }
-    this._crcTable = table;
-    return table;
-  }
-
-  private writeU16(val: number) {
-    return new Uint8Array([val & 0xFF, (val >> 8) & 0xFF]);
-  }
-
-  private writeU32(val: number) {
-    return new Uint8Array([val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF, (val >> 24) & 0xFF]);
-  }
-
+  private files: Record<string, Uint8Array> = Object.create(null);
   addFile(name: string, data: Uint8Array | string) {
-    const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    this.entries.push({
-      name,
-      data: buf,
-      crc: this.crc32(buf),
-      offset: this.offset
-    });
-    this.offset += 30 + name.length + buf.length;
+    this.files[name] = typeof data === 'string' ? new TextEncoder().encode(data) : data;
   }
-
-  generate(): Uint8Array {
-    const chunks: Uint8Array[] = [];
-    
-    // 1. Local File Headers + Data
-    for (const e of this.entries) {
-      const nameBuf = new TextEncoder().encode(e.name);
-      chunks.push(new Uint8Array([0x50, 0x4b, 0x03, 0x04])); // Signature
-      chunks.push(this.writeU16(10)); // Version
-      chunks.push(this.writeU16(0));  // Flags
-      chunks.push(this.writeU16(0));  // Compression (Store)
-      chunks.push(this.writeU32(0));  // Time/Date
-      chunks.push(this.writeU32(e.crc)); // CRC
-      chunks.push(this.writeU32(e.data.length)); // Compressed Size
-      chunks.push(this.writeU32(e.data.length)); // Uncompressed Size
-      chunks.push(this.writeU16(nameBuf.length)); // Name Length
-      chunks.push(this.writeU16(0));  // Extra Length
-      chunks.push(nameBuf);
-      chunks.push(e.data);
-    }
-
-    const centralDirOffset = this.offset;
-    let centralDirSize = 0;
-
-    // 2. Central Directory
-    for (const e of this.entries) {
-      const nameBuf = new TextEncoder().encode(e.name);
-      chunks.push(new Uint8Array([0x50, 0x4b, 0x01, 0x02])); // Signature
-      chunks.push(this.writeU16(20)); // Version made by
-      chunks.push(this.writeU16(10)); // Version needed
-      chunks.push(this.writeU16(0));  // Flags
-      chunks.push(this.writeU16(0));  // Compression
-      chunks.push(this.writeU32(0));  // Time/Date
-      chunks.push(this.writeU32(e.crc)); // CRC
-      chunks.push(this.writeU32(e.data.length));
-      chunks.push(this.writeU32(e.data.length));
-      chunks.push(this.writeU16(nameBuf.length));
-      chunks.push(this.writeU16(0)); // Extra
-      chunks.push(this.writeU16(0)); // Comment
-      chunks.push(this.writeU16(0)); // Disk start
-      chunks.push(this.writeU16(0)); // Internal attr
-      chunks.push(this.writeU32(0)); // External attr
-      chunks.push(this.writeU32(e.offset)); // Offset
-      chunks.push(nameBuf);
-      centralDirSize += 46 + nameBuf.length;
-    }
-
-    // 3. End of Central Directory
-    chunks.push(new Uint8Array([0x50, 0x4b, 0x05, 0x06])); // Signature
-    chunks.push(this.writeU16(0)); // Disk number
-    chunks.push(this.writeU16(0)); // Start disk
-    chunks.push(this.writeU16(this.entries.length)); // Entries on disk
-    chunks.push(this.writeU16(this.entries.length)); // Total entries
-    chunks.push(this.writeU32(centralDirSize));
-    chunks.push(this.writeU32(centralDirOffset));
-    chunks.push(this.writeU16(0)); // Comment length
-
-    // 合并所有 chunks：一次性申请内存，避免多次拷贝
-    const totalSize = chunks.reduce((acc, c) => acc + c.length, 0);
-    const result = new Uint8Array(totalSize);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return result;
-  }
+  generate(): Uint8Array { return zipSync(this.files, { level: 0 }); }
 }
 
 export async function handleExportCustomTheme(request: Request, env: Env, idStr: string): Promise<Response> {
@@ -289,9 +183,11 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
   config.themeName = config.themeName || config.name || "自定义主题";
   
   const zip = new ZipWriter();
+  const usedNames = new Set(['readConfig.json']);
+  const resources = new Map<string, Promise<string>>();
 
   // 辅助函数：从 R2 抓取资源并添加到 ZIP
-  const processResource = async (path: string, type: 'fonts' | 'bg') => {
+  const readResource = async (path: string) => {
     if (!path || path.startsWith('#')) return path;
     
     // 提取 key (去除 http 前缀)
@@ -311,7 +207,14 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
 
     if (obj) {
       const data = await obj.arrayBuffer();
-      const fileName = key.split('/').pop()!;
+      const baseName = key.split('/').pop()!;
+      let fileName = baseName;
+      let index = 2;
+      while (usedNames.has(fileName)) {
+        const dot = baseName.lastIndexOf('.');
+        fileName = dot > 0 ? `${baseName.slice(0, dot)}_${index++}${baseName.slice(dot)}` : `${baseName}_${index++}`;
+      }
+      usedNames.add(fileName);
       // Legado 源码显示它会从解压后的根目录找文件，所以不要带 fonts/ 或 bg/ 前缀
       zip.addFile(fileName, new Uint8Array(data));
       return fileName;
@@ -319,6 +222,11 @@ export async function handleExportCustomTheme(request: Request, env: Env, idStr:
     
     // 如果没找到，至少返回文件名，防止带路径导致 App 查找彻底失败
     return key.split('/').pop()!;
+  };
+
+  const processResource = (path: string, _type: 'fonts' | 'bg') => {
+    if (!resources.has(path)) resources.set(path, readResource(path));
+    return resources.get(path)!;
   };
 
   const tasks: Promise<any>[] = [];

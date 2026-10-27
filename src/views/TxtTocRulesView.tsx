@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, List, MoreVertical, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as api from '../api';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 
 interface TxtTocRulesViewProps {
   onAdd: () => void;
@@ -9,33 +10,27 @@ interface TxtTocRulesViewProps {
 
 export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps) {
   const [rules, setRules] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { loading, error, run, invalidate } = useLatestRequest();
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [query, setQuery] = useState('');
 
-  const fetchRules = async (q = '', p = 1) => {
-    setLoading(true);
-    try {
-      const data = await api.getTxtTocRules(q, p);
+  const fetchRules = (q = '', p = 1) =>
+    run(signal => api.getTxtTocRules(q, p, signal), data => {
       setRules(data.rules);
       setTotal(data.total);
       setTotalPages(data.totalPages);
-      setPage(p);
-    } catch (e) {
-      console.error('获取目录规则失败', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      setPage(data.page);
+      setActiveMenu(null);
+    });
 
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchRules(query, 1);
     }, 500);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); invalidate(); };
   }, [query]);
 
   useEffect(() => {
@@ -62,21 +57,13 @@ export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps)
     if (!confirm('确定要删除此目录规则吗？')) return;
     try {
       await api.deleteTxtTocRule(id);
-      setRules(prev => prev.filter(r => r.id !== id));
-      setTotal(prev => Math.max(0, prev - 1));
+      await fetchRules(query, page);
       setActiveMenu(null);
     } catch (e) {
       alert('删除失败: ' + String(e));
     }
   };
 
-  if (loading && page === 1) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-primary" size={32} />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -98,6 +85,7 @@ export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps)
           </div>
           <button
             onClick={() => fetchRules(query, page)}
+            title="刷新列表"
             className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors shrink-0"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -111,6 +99,14 @@ export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps)
           </button>
         </div>
       </div>
+
+      {error && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error">
+          <span>加载失败：{error}</span>
+          <button onClick={() => fetchRules(query, page)} className="shrink-0 font-bold">重试</button>
+        </div>
+      )}
+      {loading && <div role="status" className="text-xs text-secondary">正在加载…</div>}
 
       <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
@@ -169,13 +165,14 @@ export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps)
                     </td>
                     <td className="py-4 px-6 text-right relative">
                       <button
-                        onClick={() => setActiveMenu(activeMenu === idx ? null : idx)}
+                        aria-label={`规则操作：${rule.name}`}
+                        onClick={() => setActiveMenu(activeMenu === rule.id ? null : rule.id)}
                         className="p-1 text-secondary hover:text-primary transition-colors"
                       >
                         <MoreVertical size={18} />
                       </button>
 
-                      {activeMenu === idx && (
+                      {activeMenu === rule.id && (
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenu(null)} />
                           <div className="absolute right-6 top-10 w-24 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-xl z-20 py-1 overflow-hidden">

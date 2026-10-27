@@ -146,7 +146,10 @@ export default {
       if (path === "/api/sources" && method === "GET") return sources.handleListSources(env, url);
       if (path === "/api/sources/ids" && method === "GET") return sources.handleAllSourceIds(env);
       if (path === "/api/sources/test" && method === "POST") return sources.handleTestSources(env, request, ctx);
-      if (path === "/api/sources/test/all" && method === "POST") return sources.handleTestAllSources(env, ctx);
+      if (path === "/api/sources/test/all" && method === "POST") {
+        const body = await request.json().catch(() => ({})) as any;
+        return sources.handleTestAllSources(env, ctx, body.depth === 'content' ? 'content' : 'search');
+      }
       if (path === "/api/sources/test/stop" && method === "POST") return sources.handleStopTestSources(env);
       if (path === "/api/sources/test/progress" && method === "GET") return sources.handleGetTestProgress(env);
       if (path === "/api/sources/cleanup" && method === "POST") return sources.handleCleanupSources(env);

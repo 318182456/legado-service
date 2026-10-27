@@ -67,7 +67,8 @@ export default function App() {
   const [testingIds, setTestingIds] = useState<Set<number>>(new Set());
   const [testProgress, setTestProgress] = useState({ current: 0, total: 0 });
   const [isTestingAll, setIsTestingAll] = useState(false);
-  const pollingTimerRef = React.useRef<any>(null);
+  const pollingTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingSessionRef = React.useRef(0);
 
   useEffect(() => {
     const token = api.getToken();
@@ -128,33 +129,39 @@ export default function App() {
   };
 
   const startPollingProgress = useCallback((onFinished?: () => void) => {
-    if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
-
-    pollingTimerRef.current = setInterval(async () => {
+    if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current);
+    const session = ++pollingSessionRef.current;
+    const poll = async () => {
       try {
         const progress = await api.getTestProgress();
+        if (session !== pollingSessionRef.current) return;
         if (progress.running) {
           setIsTestingAll(true);
           setTestProgress({ current: progress.current, total: progress.total });
         } else {
-          if (pollingTimerRef.current) {
-            clearInterval(pollingTimerRef.current);
-            pollingTimerRef.current = null;
-          }
+          pollingTimerRef.current = null;
           setIsTestingAll(false);
           setTestProgress({ current: 0, total: 0 });
-          onFinished?.();
+          if (!progress.status || progress.status === 'completed') await onFinished?.();
+          else {
+            window.dispatchEvent(new CustomEvent('refresh-data'));
+            if (progress.status === 'failed') alert('全库测试失败，已保留现有书源，请重试。');
+          }
+          return;
         }
       } catch (e) {
         console.error('轮询测试进度失败:', e);
       }
-    }, 2000);
+      if (session === pollingSessionRef.current) pollingTimerRef.current = setTimeout(poll, 2000);
+    };
+    void poll();
   }, []);
 
   useEffect(() => {
+    let active = true;
     if (isLoggedIn) {
       api.getTestProgress().then(progress => {
-        if (progress.running) {
+        if (active && progress.running) {
           setIsTestingAll(true);
           setTestProgress({ current: progress.current, total: progress.total });
           startPollingProgress();
@@ -162,27 +169,27 @@ export default function App() {
       }).catch(console.error);
     } else {
       if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
+        clearTimeout(pollingTimerRef.current);
         pollingTimerRef.current = null;
       }
     }
     return () => {
+      active = false;
+      ++pollingSessionRef.current;
       if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
+        clearTimeout(pollingTimerRef.current);
         pollingTimerRef.current = null;
       }
     };
   }, [isLoggedIn, startPollingProgress]);
 
   // Test Logic (Shared)
-  const handleTest = useCallback(async (ids: number[], onFinished?: () => void) => {
-    const nextTesting = new Set(testingIds);
-    ids.forEach(id => nextTesting.add(id));
-    setTestingIds(nextTesting);
+  const handleTest = useCallback(async (ids: number[], onFinished?: () => void, depth: api.SourceCheckDepth = 'search') => {
+    setTestingIds(prev => new Set([...prev, ...ids]));
 
     try {
-      await api.testSources(ids);
-      onFinished?.();
+      await api.testSources(ids, depth);
+      await onFinished?.();
     } catch (e) {
       alert('测试失败: ' + String(e));
     } finally {
@@ -192,20 +199,23 @@ export default function App() {
         return next;
       });
     }
-  }, [testingIds]);
+  }, []);
 
-  const handleTestAll = useCallback(async (onFinished?: () => void) => {
+  const handleTestAll = useCallback(async (onFinished?: () => void, depth: api.SourceCheckDepth = 'search') => {
     if (isTestingAll) {
       if (confirm('确定要停止测试吗？')) {
         try {
-          await api.stopTestSources();
+          ++pollingSessionRef.current;
           if (pollingTimerRef.current) {
-            clearInterval(pollingTimerRef.current);
+            clearTimeout(pollingTimerRef.current);
             pollingTimerRef.current = null;
           }
+          await api.stopTestSources();
           setIsTestingAll(false);
           setTestProgress({ current: 0, total: 0 });
+          window.dispatchEvent(new CustomEvent('refresh-data'));
         } catch (e) {
+          startPollingProgress();
           alert('中止测试失败: ' + String(e));
         }
       }
@@ -213,10 +223,15 @@ export default function App() {
     }
 
     setIsTestingAll(true);
-    setTestProgress({ current: 0, total: 100 });
+    setTestProgress({ current: 0, total: 0 });
 
     try {
-      await api.testAllSources();
+      const result = await api.testAllSources(depth);
+      if (result.started === false) {
+        setIsTestingAll(false);
+        setTestProgress({ current: 0, total: 0 });
+        return;
+      }
       startPollingProgress(onFinished);
     } catch (e) {
       alert('启动后台测试失败: ' + String(e));

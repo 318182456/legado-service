@@ -134,8 +134,9 @@ export default function SettingsView() {
     if (syncingAll) return;
     setSyncingAll(true);
     try {
-      await api.syncAll();
-      alert('同步成功');
+      const result = await api.syncAll();
+      window.dispatchEvent(new CustomEvent('refresh-data'));
+      alert(api.describeSync(result));
     } catch (e) {
       alert(`同步失败: ${String(e)}`);
     } finally {

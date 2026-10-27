@@ -3,6 +3,7 @@ import {
   X, ChevronRight, Folder, Package, Type, Search, Image as ImageIcon
 } from 'lucide-react';
 import { FontPreview } from './FontPreview';
+import { assetUrl } from '../utils/assetUrl';
 
 export function AssetPicker({ type, fileTree, onSelect, onClose }: { type: string; fileTree: any; onSelect: (r: any) => void; onClose: () => void }) {
   const [currentPath, setCurrentPath] = useState<string[]>([]);
@@ -12,7 +13,7 @@ export function AssetPicker({ type, fileTree, onSelect, onClose }: { type: strin
   const extensions = useMemo(() => {
     if (type === 'font') return ['.ttf', '.otf', '.woff2'];
     const imgExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
-    if (type === 'bg') return [...imgExts, '.zip', '.json'];
+    if (type === 'bg') return imgExts;
     if (type === 'layout') return ['.json', '.zip', '.txt'];
     return [];
   }, [type]);
@@ -150,7 +151,7 @@ export function AssetPicker({ type, fileTree, onSelect, onClose }: { type: strin
                     {isFolder ? (
                       <Folder size={24} className="text-primary/40 group-hover:scale-110 transition-transform" />
                     ) : isImage(item.path) ? (
-                      <img src={`${window.location.origin}/repo/${item.path}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                      <img src={assetUrl(item.path, window.location.origin)} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                     ) : type === 'layout' ? (
                       <Package size={24} className="text-primary/30" />
                     ) : type === 'font' ? (

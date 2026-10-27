@@ -73,79 +73,48 @@ export async function handleToggleSubscription(request: Request, env: Env, id: n
 }
 
 export async function handleSync(env: Env, id: number | null, ctx?: any): Promise<Response> {
-  console.log(`[Sync] 收到手动多线程同步请求: ID=${id || "ALL (全局同步)"}`);
-  const startTime = Date.now();
-
-  const runSync = async () => {
-    const subs = id 
-      ? [await env.DB.prepare("SELECT * FROM subscriptions WHERE id=?").bind(id).first()] 
-      : (await env.DB.prepare("SELECT * FROM subscriptions WHERE enabled=1").all()).results;
-    
-    console.log(`[Sync] 发现 ${subs.length} 个待同步订阅...`);
-
-    const itemsToSync = (subs as any[]).map(sub => ({
-      id: sub.id,
-      url: sub.url,
-      type: sub.type,
-      name: sub.name
-    }));
-
-    // 运行我们的通用多线程任务池！
-    await runWorkerPool({
-      taskType: "sync-subscriptions",
-      items: itemsToSync,
-      threadCount: Math.min(4, itemsToSync.length), // 动态按数量分配线程
-      concurrencyPerThread: 5, // 订阅抓取通常每线程并发 5 个即可，防被封
-      onResult: async (msg) => {
-        const sub = itemsToSync.find(x => x.id === msg.id);
-        if (!sub) return;
-
-        const subStart = Date.now();
-        console.log(`[Sync] 正在保存订阅数据到数据库: [${sub.name || sub.url}]...`);
-
-        if (msg.success) {
-          try {
-            let count = 0;
-            if (sub.type === "source") {
-              count = await syncSourceSubscription(env, sub.id, sub.url, msg.rawItems);
-            } else if (sub.type === "rule") {
-              count = await syncRuleSubscription(env, sub.id, sub.url, msg.rawItems);
-            } else if (sub.type === "txtTocRule") {
-              count = await syncTxtTocRuleSubscription(env, sub.id, sub.url, msg.rawItems);
-            } else if (sub.type === "dictRule") {
-              count = await syncDictRuleSubscription(env, sub.id, sub.url, msg.rawItems);
-            }
-            console.log(`[Sync] 订阅 [${sub.name || sub.url}] 数据库同步成功，入库 ${count} 个项目，耗时: ${Date.now() - subStart}ms`);
-          } catch (dbErr: any) {
-            console.error(`[Sync] 订阅 [${sub.name || sub.url}] 保存数据库失败:`, dbErr.message || dbErr);
-          }
-        } else {
-          console.error(`[Sync] 订阅 [${sub.name || sub.url}] 抓取/解析失败:`, msg.error);
-        }
-      },
-      onWorkerDone: (t) => {
-        console.log(`[Sync] 订阅同步工作线程 ${t + 1} 已圆满完成其分配的分片任务。`);
-      }
-    });
-
-    console.log("[Sync] 正在重新构建全局缓存...");
-    await Promise.all([
-      rebuildCache(env, "source"),
-      rebuildCache(env, "rule"),
-      rebuildCache(env, "txtTocRule"),
-      rebuildCache(env, "dictRule")
-    ]);
-    console.log(`[Sync] 全局同步任务与缓存重建已圆满完成，总耗时: ${Date.now() - startTime}ms`);
-  };
-
   try {
-    // 为了让前端 UI 的“立即同步 / 全局同步”加载状态能准确反映实际同步进度，
-    // 我们直接同步等待同步完成再返回 Response，而不是丢给后台运行。
-    await runSync();
-    return ok({ message: "Sync completed successfully" });
-  } catch (e: any) {
-    console.error("[Sync] 手动同步发生致命错误:", e);
-    return err(`同步发生异常: ${e.message || e}`, 500);
+    const rows = id !== null
+      ? [await env.DB.prepare("SELECT * FROM subscriptions WHERE id=?").bind(id).first()]
+      : (await env.DB.prepare("SELECT * FROM subscriptions WHERE enabled=1").all()).results;
+    if (id !== null && !rows[0]) return err("订阅不存在", 404);
+    const manualUrls = new Set(["manual_sources", "manual_rules", "manual_txt_toc_rules", "manual_dict_rules"]);
+    const items = rows.filter((sub: any) => !manualUrls.has(sub.url)) as any[];
+    const summary = {
+      total: rows.length, succeeded: 0, failed: 0, skipped: rows.length - items.length,
+      failures: [] as { id: number; name: string; error: string }[],
+    };
+    const pending = new Set(items.map(sub => sub.id));
+    const byId = new Map(items.map(sub => [sub.id, sub]));
+    const fail = (sub: any, error: unknown) => {
+      summary.failed++;
+      summary.failures.push({ id: sub.id, name: sub.name || `订阅 #${sub.id}`, error: String(error).slice(0, 200) });
+    };
+    await runWorkerPool({
+      taskType: "sync-subscriptions", items, threadCount: Math.min(4, items.length), concurrencyPerThread: 5,
+      onResult: async msg => {
+        const sub = byId.get(msg.id);
+        if (!sub || !pending.delete(msg.id)) return;
+        if (!msg.success) { fail(sub, msg.error || "抓取失败"); return; }
+        try {
+          if (sub.type === "source") await syncSourceSubscription(env, sub.id, sub.url, msg.rawItems);
+          else if (sub.type === "rule") await syncRuleSubscription(env, sub.id, sub.url, msg.rawItems);
+          else if (sub.type === "txtTocRule") await syncTxtTocRuleSubscription(env, sub.id, sub.url, msg.rawItems);
+          else if (sub.type === "dictRule") await syncDictRuleSubscription(env, sub.id, sub.url, msg.rawItems);
+          else throw new Error("不支持的订阅类型");
+          summary.succeeded++;
+        } catch (error) { fail(sub, error instanceof Error ? error.message : error); }
+      },
+    });
+    for (const subId of pending) fail(byId.get(subId), "任务未完成，请重试");
+    // 包含部分入库失败的情况：已经写入的数据仍需更新缓存。
+    await Promise.all([
+      rebuildCache(env, "source"), rebuildCache(env, "rule"),
+      rebuildCache(env, "txtTocRule"), rebuildCache(env, "dictRule"),
+    ]);
+    return ok(summary);
+  } catch (error) {
+    return err(`同步发生异常: ${error instanceof Error ? error.message : String(error)}`, 500);
   }
 }
 

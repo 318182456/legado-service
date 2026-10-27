@@ -62,8 +62,9 @@ export default function SubscriptionView({ onImport, onExplore, onJsonImport }: 
   const handleSync = async (id: number) => {
     setSyncing(id);
     try {
-      await api.syncOne(id);
-      fetchSubs();
+      const result = await api.syncOne(id);
+      await fetchSubs();
+      if (result.failed || result.skipped) alert(api.describeSync(result));
     } catch (e) {
       alert('同步失败: ' + String(e));
     } finally {

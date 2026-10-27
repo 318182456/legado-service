@@ -1,3 +1,4 @@
+import { readPage, positiveInteger } from "../pagination";
 import { Env } from "../types";
 import {
   ok,
@@ -9,26 +10,12 @@ import {
 
 export async function handleListRules(env: Env, url: URL): Promise<Response> {
   const q = url.searchParams.get("q") || "";
-  const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 10;
-  const offset = (page - 1) * limit;
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM rules WHERE name LIKE ? LIMIT ? OFFSET ?`
-  ).bind(`%${q}%`, limit, offset).all();
-
-  const totalRow = (await env.DB.prepare(
-    `SELECT COUNT(*) as count FROM rules WHERE name LIKE ?`
-  ).bind(`%${q}%`).first()) as any;
-  const total = totalRow?.count || 0;
-
-  return ok({
-    rules: results,
-    total,
-    totalPages: Math.ceil(total / limit),
-    page,
-    limit,
-    hasMore: offset + results.length < total
+  const data = await readPage(env, {
+    table: "rules", where: "name LIKE ?", params: [`%${q}%`], orderBy: "id DESC",
+    page: positiveInteger(url.searchParams.get("page"), 1), limit: 10,
   });
+  const { results, ...pagination } = data;
+  return ok({ rules: results, ...pagination });
 }
 
 export async function handleAddRule(request: Request, env: Env): Promise<Response> {

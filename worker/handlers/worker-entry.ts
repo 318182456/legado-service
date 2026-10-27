@@ -34,7 +34,7 @@ if (parentPort) {
           port.postMessage({
             type: "result",
             id: msg.item?.id,
-            verdict: taskType === "test-sources" ? "unavailable" : undefined,
+            verdict: taskType === "test-sources" ? "skipped" : undefined,
             available: taskType === "test-sources" ? false : undefined,
             success: taskType === "sync-subscriptions" ? false : undefined,
             reason: "worker-error",

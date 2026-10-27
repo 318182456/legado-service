@@ -1,3 +1,4 @@
+import { readPage, positiveInteger } from "../pagination";
 import { Env } from "../types";
 import {
   ok,
@@ -9,23 +10,12 @@ import {
 
 export async function handleListTxtTocRules(env: Env, url: URL): Promise<Response> {
   const q = url.searchParams.get("q") || "";
-  const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
-  const limit = 10;
-  const offset = (page - 1) * limit;
-
-  const [countRow, listResult] = await Promise.all([
-    env.DB.prepare(`SELECT COUNT(*) as cnt FROM txt_toc_rules WHERE name LIKE ?`).bind(`%${q}%`).first() as Promise<{ cnt: number }>,
-    env.DB.prepare(`SELECT * FROM txt_toc_rules WHERE name LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?`).bind(`%${q}%`, limit, offset).all(),
-  ]);
-
-  const total = (countRow as any)?.cnt ?? 0;
-  return ok({
-    rules: listResult.results,
-    total,
-    totalPages: Math.max(1, Math.ceil(total / limit)),
-    page,
-    limit,
+  const data = await readPage(env, {
+    table: "txt_toc_rules", where: "name LIKE ?", params: [`%${q}%`], orderBy: "id DESC",
+    page: positiveInteger(url.searchParams.get("page"), 1), limit: 10,
   });
+  const { results, ...pagination } = data;
+  return ok({ rules: results, ...pagination });
 }
 
 export async function handleAddTxtTocRule(request: Request, env: Env): Promise<Response> {

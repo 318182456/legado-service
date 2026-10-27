@@ -418,7 +418,8 @@ export async function clearReaderToken(env: Env, username: string): Promise<void
  * 配了用户名密码就自动登录换 token 并缓存；显式填的 accessToken 优先级最高。
  */
 export async function resolveReaderConfig(
-  env: Env
+  env: Env,
+  purpose: 'review' | 'check' = 'review',
 ): Promise<{ readerUrl: string; accessToken?: string; username?: string } | null> {
   const rows = await env.DB.prepare(
     `SELECT key, value FROM system_config
@@ -430,7 +431,7 @@ export async function resolveReaderConfig(
   for (const r of (rows.results ?? []) as any[]) cfg[r.key] = r.value ?? "";
 
   // 默认开启，显式设为 '0' 才关闭
-  if (cfg["review_auto_fetch"] === "0") return null;
+  if (purpose === "review" && cfg["review_auto_fetch"] === "0") return null;
 
   const readerUrl = (cfg["reader_url"] || env.READER_URL || "").trim();
   if (!readerUrl) return null;

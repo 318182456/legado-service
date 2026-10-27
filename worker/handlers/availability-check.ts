@@ -1,16 +1,7 @@
-/**
- * 书源可用性判定
- *
- * 模拟阅读 App 的书源校验流程：按 searchUrl 的配置发起一次真实搜索请求，
- * 再用 ruleSearch.bookList 检查响应里是否真的存在搜索结果。
- *
- * 判定是三态的 —— 除了「可用」「失效」，还有「无法判定」。本地环境跑不了
- * 书源里的 JS 规则，也无法区分站点限流和站点失效，这类源如果被强行归入
- * 二值结果，要么虚高标记为正常，要么误杀。调用方不应据 skipped 改写
- * is_available，只更新 last_checked 即可。
- *
- * 本模块被工作线程直接加载，因此不依赖任何项目内其它模块与 Node 内置模块。
- */
+/** 书源检测：优先运行 reader 原规则；无 reader 时仅验证明确支持的静态规则。 */
+import { checkWithReader } from './source-reader-check.ts';
+import { extractSearchBooks } from './source-rules.ts';
+import { readSourceBody } from './source-http.ts';
 
 export type CheckVerdict = "available" | "unavailable" | "skipped";
 
@@ -28,6 +19,10 @@ export interface CheckOptions {
   timeoutMs?: number;
   /** 网络抖动类错误的重试次数，默认 1 */
   retries?: number;
+  keyword?: string;
+  depth?: 'search' | 'content';
+  totalTimeoutMs?: number;
+  reader?: { url: string; accessToken?: string };
 }
 
 const DEFAULT_USER_AGENT =
@@ -36,8 +31,7 @@ const DEFAULT_KEYWORD = "我的";
 const DEFAULT_TIMEOUT_MS = 12000;
 /** 特征匹配用不到整页，读够 1MB 就够判定，避免大响应吃满内存 */
 const MAX_BODY_BYTES = 1024 * 1024;
-/** 正常搜索页面（HTML 或 JSON）都不会短于这个长度 */
-const MIN_BODY_LENGTH = 200;
+
 
 const available = (reason: string, httpStatus?: number, detail?: string): CheckOutcome =>
   ({ verdict: "available", reason, httpStatus, detail });
@@ -61,25 +55,28 @@ export async function checkBookSource(
   } catch (e: any) {
     return unavailable("invalid-json", undefined, e?.message);
   }
-  if (!src || typeof src !== "object") {
+  if (!src || typeof src !== "object" || Array.isArray(src)) {
     return unavailable("invalid-json", undefined, "书源不是 JSON 对象");
   }
 
+  if (typeof src.loginUrl === 'string' && src.loginUrl.trim()) return unavailable('login-required', undefined, '书源带登录配置，按设置禁用');
+  if (options.reader) return checkWithReader(src, options);
   const searchUrl: unknown = src.searchUrl;
 
   // 含 JS 的规则在本地无法求值，判不了
-  if (hasDynamicScript(searchUrl) || hasDynamicScript(bookSourceUrl)) {
+  if (hasDynamicScript(searchUrl) || hasDynamicScript(bookSourceUrl) || hasDynamicScript(src.header)) {
     return skipped("dynamic-js", "searchUrl 或源地址含 JS/动态模板");
   }
 
   // 没有搜索规则的源只能退一步验证域名是否存活
-  if (typeof searchUrl !== "string" || !searchUrl.trim()) {
-    return await checkHomepage(bookSourceUrl, options);
+  if (typeof searchUrl !== "string" || !searchUrl.trim() || searchUrl.trim() === '-') {
+    return skipped('no-search-rule', '未配置可执行的搜索规则，需要 reader 检测');
   }
 
   let req: SearchRequest;
   try {
-    req = buildSearchRequest(src, searchUrl, bookSourceUrl);
+    req = buildSearchRequest(src, searchUrl, bookSourceUrl, options.keyword);
+    if (req.keywordEncodingUnsupported) return skipped("charset-unsupported", "非 UTF-8 请求请配置 reader 完整检测");
   } catch (e: any) {
     return unavailable("invalid-url", undefined, e?.message);
   }
@@ -101,19 +98,21 @@ export async function checkBookSource(
   const redirectOutcome = classifyRedirect(res);
   if (redirectOutcome) return redirectOutcome;
 
-  return classifyContent(src, text, res, req);
+  const result = classifyContent(src, text, res, req);
+  return options.depth === 'content' && result.verdict === 'available'
+    ? skipped('reader-required', '静态搜索已验证，正文检测需要 reader') : result;
 }
 
 /**
  * 兼容旧调用方的二值封装。
- * 「无法判定」按可用处理以避免误杀 —— 需要区分三态的调用方请直接用 checkBookSource。
+ * 仅明确验证通过时返回 true —— 需要区分三态的调用方请直接用 checkBookSource。
  */
 export async function checkBookSourceRealAvailability(
   rawJsonStr: string,
   bookSourceUrl: string
 ): Promise<boolean> {
   const outcome = await checkBookSource(rawJsonStr, bookSourceUrl);
-  return outcome.verdict !== "unavailable";
+  return outcome.verdict === "available";
 }
 
 /**
@@ -145,10 +144,11 @@ interface SearchRequest {
   keywordEncodingUnsupported: boolean;
 }
 
-function buildSearchRequest(src: any, searchUrl: string, bookSourceUrl: string): SearchRequest {
-  const keyword = resolveKeyword(src);
+function buildSearchRequest(src: any, searchUrl: string, bookSourceUrl: string, checkKeyword?: string): SearchRequest {
+  const keyword = checkKeyword || resolveKeyword(src);
   const split = splitUrlAndOptions(searchUrl.trim());
   const opts = split.options ? parseLooseJson(split.options) : null;
+  if (split.options && !opts) throw new Error("无法解析请求选项");
 
   const method = String(opts?.method || "GET").toUpperCase();
   const charset = normalizeCharset(opts?.charset);
@@ -221,6 +221,7 @@ function mergeHeaders(target: Record<string, string>, raw: unknown): void {
   if (!parsed || typeof parsed !== "object") return;
   for (const [k, v] of Object.entries(parsed)) {
     if (v === null || v === undefined || typeof v === "object") continue;
+    for (const existing of Object.keys(target)) if (existing.toLowerCase() === k.toLowerCase()) delete target[existing];
     target[k] = String(v);
   }
 }
@@ -249,7 +250,9 @@ function buildBody(rawBody: unknown, keyword: string, headers: Record<string, st
 
   if (typeof rawBody === "object") {
     if (!hasContentType) headers["Content-Type"] = "application/json";
-    return fillPlaceholders(JSON.stringify(rawBody), keyword, false);
+    const fill = (v: any): any => typeof v === 'string' ? fillPlaceholders(v, keyword, false)
+      : Array.isArray(v) ? v.map(fill) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, value]) => [k, fill(value)])) : v;
+    return JSON.stringify(fill(rawBody));
   }
 
   const body = String(rawBody).trim();
@@ -259,16 +262,10 @@ function buildBody(rawBody: unknown, keyword: string, headers: Record<string, st
   }
 
   if (!hasContentType) headers["Content-Type"] = "application/x-www-form-urlencoded";
-  return body
-    .split("&")
-    .map((pair) => {
-      const eq = pair.indexOf("=");
-      if (eq === -1) return pair;
-      const name = pair.slice(0, eq);
-      const value = fillPlaceholders(pair.slice(eq + 1), keyword, false);
-      return `${name}=${encodeURIComponent(value)}`;
-    })
-    .join("&");
+  const params = new URLSearchParams(body);
+  const filled = new URLSearchParams();
+  for (const [key, value] of params) filled.append(key, fillPlaceholders(value, keyword, false));
+  return filled.toString();
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -310,41 +307,14 @@ async function fetchOnce(
       redirect: "follow",
       signal: controller.signal,
     });
-    const bytes = await readBodyCapped(res, MAX_BODY_BYTES);
+    const { bytes, truncated } = await readSourceBody(res, MAX_BODY_BYTES);
+    if (truncated) return { outcome: skipped('body-too-large', '响应超过读取上限，请使用 reader 复检') };
     return { res, bytes };
   } catch (e: any) {
     return { outcome: classifyNetworkError(e) };
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function readBodyCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
-  if (!res.body) return new Uint8Array(0);
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (total < maxBytes) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      chunks.push(value);
-      total += value.byteLength;
-    }
-  } finally {
-    reader.cancel().catch(() => {});
-  }
-
-  const out = new Uint8Array(Math.min(total, maxBytes));
-  let offset = 0;
-  for (const chunk of chunks) {
-    if (offset >= out.length) break;
-    const slice = chunk.subarray(0, out.length - offset);
-    out.set(slice, offset);
-    offset += slice.byteLength;
-  }
-  return out;
 }
 
 /** 网络层错误分类。undici 把系统错误码放在 cause 上 */
@@ -355,22 +325,23 @@ function classifyNetworkError(e: any): CheckOutcome {
   const detail = code || message;
 
   if (name === "AbortError" || name === "TimeoutError" || code === "UND_ERR_CONNECT_TIMEOUT") {
-    return unavailable("timeout", undefined, detail);
+    return skipped("timeout", "网络请求超时，请稍后复检");
   }
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "ERR_INVALID_URL") {
+  if (code === "EAI_AGAIN") return skipped("dns-temporary", "DNS 暂时不可用");
+  if (code === "ENOTFOUND" || code === "ERR_INVALID_URL") {
     return unavailable("dns-failure", undefined, detail);
   }
   if (code === "ECONNREFUSED" || code === "EHOSTUNREACH" || code === "ENETUNREACH") {
     return unavailable("connection-refused", undefined, detail);
   }
   if (code === "ECONNRESET" || code === "EPIPE" || message.includes("socket hang up")) {
-    return unavailable("connection-reset", undefined, detail);
+    return skipped("connection-reset", "连接中断，请稍后复检");
   }
   // 证书过期/自签名的站点在阅读 App 里同样打不开，算失效，但不当异常上报
   if (code.startsWith("ERR_TLS") || code.startsWith("ERR_SSL") || /CERT|SSL|TLS/i.test(code)) {
-    return unavailable("tls-failure", undefined, detail);
+    return skipped("tls-failure", "检测环境 TLS 验证失败，请复检");
   }
-  return unavailable("network-error", undefined, detail);
+  return skipped("network-error", "检测网络异常，请稍后复检");
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -381,8 +352,9 @@ function classifyStatus(status: number): CheckOutcome | null {
   if (status >= 200 && status < 400) return null;
   // 限流只说明测得太密，不代表源失效
   if (status === 429) return skipped("rate-limited", `HTTP ${status}`);
-  if (status === 401 || status === 403) return unavailable("access-denied", status);
-  if (status >= 500) return unavailable("server-error", status);
+  if (status === 401) return unavailable("login-required", status, "书源要求登录，按设置禁用");
+  if (status === 403) return skipped("access-denied", "访问被拒绝，需确认是否存在防护限制");
+  if (status >= 500) return skipped("server-error", `源站暂时错误 HTTP ${status}`);
   return unavailable("http-error", status);
 }
 
@@ -411,30 +383,12 @@ function classifyContent(
   res: Response,
   req: SearchRequest
 ): CheckOutcome {
-  if (!text.trim()) return unavailable("empty-body", res.status);
-  if (text.length < MIN_BODY_LENGTH) {
-    return unavailable("body-too-short", res.status, `${text.length} 字符`);
-  }
-
-  const listRule = typeof src?.ruleSearch?.bookList === "string" ? src.ruleSearch.bookList.trim() : "";
-  const contentType = res.headers.get("content-type") || "";
-  const trimmed = text.trim();
-  const looksJson =
-    contentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
-
-  const outcome = looksJson
-    ? classifyJsonContent(trimmed, listRule, res.status)
-    : classifyHtmlContent(text, listRule, res.status);
-
-  // 关键字没能按站点编码发出去时，搜不到结果是我们自己的问题，不能算源失效
-  if (
-    outcome.verdict === "unavailable" &&
-    req.keywordEncodingUnsupported &&
-    (outcome.reason === "empty-result" || outcome.reason === "rule-miss")
-  ) {
-    return skipped("charset-unsupported", `${req.charset} 关键字编码不支持`);
-  }
-  return outcome;
+  if (!text.trim()) return skipped("empty-body", "返回空内容，请复检");
+  const result = extractSearchBooks(text, res.headers.get('content-type') || '', src.ruleSearch, res.url || req.url);
+  if (!result.supported) return skipped('rule-unsupported', '静态规则无法完整解释，请配置 reader 检测');
+  if (result.books.length) return available('search-verified', res.status, `实际解析出 ${result.books.length} 个书名及书籍地址，正文未测`);
+  if (!result.matched) return skipped('empty-result', '测试关键词没有匹配结果，请复检');
+  return unavailable('search-fields-empty', res.status, '搜索列表存在，但无法解析有效书名和书籍地址');
 }
 
 /** 强特征单独成立即可判定，弱特征需要配合 4xx/5xx 状态码，避免误杀正常页面 */
@@ -443,10 +397,6 @@ const HARD_BLOCK_PATTERNS = [
   "__cf_chl_",
   "/cdn-cgi/challenge-platform",
   "challenge-form",
-  "g-recaptcha",
-  "h-captcha",
-  "data-sitekey",
-  "geetest",
   "aliyun-waf",
   "tencent-waf",
 ];
@@ -477,14 +427,14 @@ function detectBlockPage(text: string, status: number): CheckOutcome | null {
     .trim();
 
   for (const p of HARD_BLOCK_PATTERNS) {
-    if (lower.includes(p)) return unavailable("anti-bot", status, p);
+    if (lower.includes(p)) return skipped("anti-bot", p);
   }
   for (const p of BLOCK_TITLE_PATTERNS) {
-    if (title.includes(p)) return unavailable("anti-bot", status, `title: ${p}`);
+    if (title.includes(p)) return skipped("anti-bot", `title: ${p}`);
   }
   if (status >= 400) {
     for (const p of SOFT_BLOCK_PATTERNS) {
-      if (lower.includes(p)) return unavailable("anti-bot", status, p);
+      if (lower.includes(p)) return skipped("anti-bot", p);
     }
   }
 
@@ -499,144 +449,6 @@ function detectBlockPage(text: string, status: number): CheckOutcome | null {
     }
   }
   return null;
-}
-
-function classifyJsonContent(text: string, listRule: string, status: number): CheckOutcome {
-  let parsed: any;
-  try {
-    parsed = JSON.parse(text);
-  } catch (_) {
-    // 声称是 JSON 却解析不出，通常是拦截页或接口改版
-    return unavailable("invalid-response", status, "响应不是合法 JSON");
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return unavailable("invalid-response", status, "JSON 顶层不是对象或数组");
-  }
-
-  if (listRule) {
-    const path = readJsonPath(parsed, listRule);
-    if (path.supported) {
-      if (path.value === undefined || path.value === null) {
-        return unavailable("rule-miss", status, `bookList 取值为空: ${listRule}`);
-      }
-      if (Array.isArray(path.value)) {
-        return path.value.length > 0
-          ? available("search-hit", status, `${path.value.length} 条结果`)
-          : unavailable("empty-result", status, "bookList 为空数组");
-      }
-      return available("search-hit", status);
-    }
-  }
-
-  if (Array.isArray(parsed)) {
-    return parsed.length > 0
-      ? available("search-hit", status, `${parsed.length} 条结果`)
-      : unavailable("empty-result", status, "顶层数组为空");
-  }
-  return available("search-response", status);
-}
-
-function classifyHtmlContent(text: string, listRule: string, status: number): CheckOutcome {
-  const tokens = extractHtmlRuleTokens(listRule);
-  if (!tokens.length) {
-    // 规则里没有可校验的字面特征（纯 XPath 轴、JS 规则等），只能认响应正常
-    return available("search-response", status);
-  }
-  for (const token of tokens) {
-    if (text.includes(token)) return available("search-hit", status, token);
-  }
-  return unavailable("rule-miss", status, `未命中 bookList 特征: ${tokens.join(", ")}`);
-}
-
-/**
- * 从 bookList 规则里提取可做存在性检查的字面 token（类名 / id）。
- * 覆盖阅读 App 的几种规则语法：默认规则 class.xxx、CSS 选择器、XPath 属性谓词。
- * 提取不到就返回空数组 —— 宁可不判定，也不能凭猜测判失效。
- */
-function extractHtmlRuleTokens(rule: string): string[] {
-  if (!rule || /@js:|<js>/i.test(rule)) return [];
-
-  // || 是备选规则、%% 是交替取值，只看第一段就够定位特征
-  const head = rule
-    .split(/\|\||%%/)[0]
-    .replace(/^@(css|xpath|json|filter)\s*:/i, "")
-    .trim();
-
-  const tokens = new Set<string>();
-  const push = (raw?: string) => {
-    const v = (raw || "").trim();
-    // 过短的 token（tag.li、.a）没有判别力，命不中也说明不了问题
-    if (v.length >= 3 && /^[A-Za-z][\w-]*$/.test(v)) tokens.add(v);
-  };
-
-  for (const m of head.matchAll(/\b(?:class|id)\.([\w-]+)/gi)) push(m[1]);
-  for (const m of head.matchAll(/@(?:class|id)\s*=\s*["']([^"']+)["']/gi)) {
-    for (const part of m[1].split(/\s+/)) push(part);
-  }
-  for (const m of head.matchAll(/[.#]([A-Za-z][\w-]{2,})/g)) push(m[1]);
-
-  return [...tokens].slice(0, 4);
-}
-
-/**
- * 极简 JSONPath 取值，只支持 `$.a.b[0]` 与 `$.a[*]` 这类直路径。
- * 遇到递归下降、过滤器、切片等不支持的语法就报 unsupported，交由上层放行。
- */
-function readJsonPath(root: any, rawPath: string): { supported: boolean; value?: any } {
-  const path = rawPath.replace(/^@json:/i, "").trim();
-  if (!path.startsWith("$")) return { supported: false };
-
-  const rest = path.slice(1);
-  if (!rest) return { supported: true, value: root };
-  if (/\.\.|\?|\(|,|:/.test(rest)) return { supported: false };
-
-  const stepRe = /\.([\w-]+)|\[\s*(\*|\d+)\s*\]|\[\s*'([^']+)'\s*\]|\[\s*"([^"]+)"\s*\]/g;
-  let cursor = 0;
-  let value: any = root;
-
-  for (const m of rest.matchAll(stepRe)) {
-    if (m.index !== cursor) return { supported: false }; // 中间有无法识别的语法
-    cursor = m.index + m[0].length;
-
-    if (value === null || value === undefined) return { supported: true, value: undefined };
-
-    const star = m[2] === "*";
-    if (star) {
-      // [*] 展开：值本身就是要遍历的集合
-      if (!Array.isArray(value) && typeof value === "object") value = Object.values(value);
-      continue;
-    }
-    const key = m[1] ?? m[3] ?? m[4] ?? m[2];
-    value = typeof value === "object" ? value[key as any] : undefined;
-  }
-
-  if (cursor !== rest.length) return { supported: false };
-  return { supported: true, value };
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// 降级校验与编解码
-// ─────────────────────────────────────────────────────────────────────
-
-/** 没有 searchUrl 时的兜底：只验证源站域名是否存活 */
-async function checkHomepage(bookSourceUrl: string, options: CheckOptions): Promise<CheckOutcome> {
-  if (!/^https?:\/\//i.test(bookSourceUrl)) {
-    return unavailable("invalid-url", undefined, `非 HTTP(S) 源地址: ${bookSourceUrl}`);
-  }
-  const req: SearchRequest = {
-    url: bookSourceUrl,
-    method: "GET",
-    headers: { "User-Agent": DEFAULT_USER_AGENT },
-    charset: null,
-    keyword: DEFAULT_KEYWORD,
-    keywordEncodingUnsupported: false,
-  };
-  const fetched = await fetchWithRetry(req, options);
-  if ("outcome" in fetched) return fetched.outcome;
-
-  const statusOutcome = classifyStatus(fetched.res.status);
-  if (statusOutcome) return statusOutcome;
-  return available("homepage-ok", fetched.res.status, "书源未配置 searchUrl");
 }
 
 function normalizeCharset(raw: unknown): string | null {

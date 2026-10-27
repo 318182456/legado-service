@@ -25,6 +25,16 @@ export const SCHEMA_STATEMENTS = [
     last_checked    TEXT    DEFAULT NULL,
     url_hash        TEXT    NOT NULL DEFAULT ''
   )`,
+    `CREATE TABLE IF NOT EXISTS source_checks (
+    source_id INTEGER PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    source_updated_at TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK(verdict IN ('available', 'unavailable', 'skipped')),
+    reason TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    duration INTEGER NOT NULL DEFAULT 0,
+    checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+    `CREATE INDEX IF NOT EXISTS idx_source_checks_verdict ON source_checks(verdict)`,
     `ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_subscription_id_book_source_url_key`,
     `CREATE TABLE IF NOT EXISTS rules (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

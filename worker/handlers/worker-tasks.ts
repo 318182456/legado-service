@@ -37,7 +37,7 @@ export async function executeTask(taskType: TaskType, item: any): Promise<TaskRe
   const startTime = Date.now();
   try {
     if (taskType === "test-sources") {
-      const outcome = await checkBookSource(item.raw_json, item.book_source_url);
+      const outcome = await checkBookSource(item.raw_json, item.book_source_url, item.checkOptions || {});
       return {
         type: "result",
         id: item.id,
@@ -66,9 +66,10 @@ export async function executeTask(taskType: TaskType, item: any): Promise<TaskRe
     return {
       type: "result",
       id: item?.id,
-      verdict: taskType === "test-sources" ? "unavailable" : undefined,
+      verdict: taskType === "test-sources" ? "skipped" : undefined,
       available: taskType === "test-sources" ? false : undefined,
       reason: taskType === "test-sources" ? "task-error" : undefined,
+      detail: taskType === "test-sources" ? "检测任务异常，请复检" : undefined,
       success: taskType === "sync-subscriptions" ? false : undefined,
       error: err?.message || String(err),
       duration: Date.now() - startTime,

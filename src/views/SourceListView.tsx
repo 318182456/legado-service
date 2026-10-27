@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Search, Zap, ShieldCheck, Upload, BookOpen, CheckCircle2, AlertCircle, MoreVertical, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import * as api from '../api';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { StatCard } from '../components/StatCard';
 
 interface SourceListViewProps {
@@ -8,53 +9,55 @@ interface SourceListViewProps {
   testingIds: Set<number>;
   testProgress: { current: number; total: number };
   isTestingAll: boolean;
-  onTest: (ids: number[], onFinished?: () => void) => Promise<void>;
-  onTestAll: (onFinished?: () => void) => Promise<void>;
+  onTest: (ids: number[], onFinished?: () => void, depth?: api.SourceCheckDepth) => Promise<void>;
+  onTestAll: (onFinished?: () => void, depth?: api.SourceCheckDepth) => Promise<void>;
 }
 
 export default function SourceListView({ 
   onImport, testingIds, testProgress, isTestingAll, onTest, onTestAll 
 }: SourceListViewProps) {
   const [sources, setSources] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { loading, error, run, invalidate } = useLatestRequest();
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [stats, setStats] = useState({ total: 0, available: 0, unavailable: 0 });
+  const [stats, setStats] = useState({ total: 0, available: 0, unavailable: 0, unchecked: 0 });
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [cleaning, setCleaning] = useState(false);
+  const [checkDepth, setCheckDepth] = useState<api.SourceCheckDepth>(() => localStorage.getItem('legado_check_depth') === 'search' ? 'search' : 'content');
   const [excludeDuplicate, setExcludeDuplicate] = useState(() => {
     return localStorage.getItem('legado_exclude_duplicate') === 'true';
   });
 
-  const fetchSources = async (q = '', p = 1, f = 'all', exDup = false) => {
-    setLoading(true);
-    try {
-      const data = await api.getSources(q, p, f, exDup);
+  const fetchSources = (q = '', p = 1, f = 'all', exDup = false) =>
+    run(signal => api.getSources(q, p, f, exDup, signal), data => {
       setSources(data.sources);
       setTotal(data.total);
       setTotalPages(data.totalPages);
       setStats(data.stats);
-      setPage(p);
-    } catch (e) {
-      console.error('获取书源失败', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      setPage(data.page);
+      setActiveMenu(null);
+      setSelectedIds(prev => new Set([...prev].filter(id => data.sources.some(s => s.id === id))));
+    });
 
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchSources(query, 1, filter, excludeDuplicate);
     }, 500);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); invalidate(); };
   }, [query, filter, excludeDuplicate]);
 
+  useEffect(() => {
+    const handler = () => fetchSources(query, page, filter, excludeDuplicate);
+    window.addEventListener('refresh-data', handler);
+    return () => window.removeEventListener('refresh-data', handler);
+  }, [query, page, filter, excludeDuplicate]);
+
   const handleLocalTest = (ids: number[]) => {
-    onTest(ids, () => fetchSources(query, page, filter, excludeDuplicate));
+    onTest(ids, () => window.dispatchEvent(new CustomEvent('refresh-data')), checkDepth);
   };
 
   const handleLocalTestAll = () => {
@@ -69,15 +72,15 @@ export default function SourceListView({
       setCleaning(true);
       try {
         const res = await api.cleanupSources();
-        // 先刷新页面数据和统计卡片，再弹出阻断式 alert，保证卡片上的统计数字和弹窗报告百分之百实时一致
-        await fetchSources(query, 1, filter, excludeDuplicate);
+        // 通知当前页面刷新，避免任务期间切换筛选后被旧条件覆盖。
+        window.dispatchEvent(new CustomEvent('refresh-data'));
         alert(`全库测试与自动标记完成！\n- 自动禁用并归类失效书源: ${res.markedInvalid} 个\n- 自动禁用并归类重复书源: ${res.markedDuplicates} 个`);
       } catch (e) {
         alert('自动标记清理失败: ' + String(e));
       } finally {
         setCleaning(false);
       }
-    });
+    }, checkDepth);
   };
 
   const toggleAll = () => {
@@ -108,7 +111,7 @@ export default function SourceListView({
     if (!confirm('确定要删除此书源吗？')) return;
     try {
       await api.deleteSource(id);
-      setSources(prev => prev.filter(s => s.id !== id));
+      await fetchSources(query, page, filter, excludeDuplicate);
       setActiveMenu(null);
     } catch (e) {
       alert('删除失败: ' + String(e));
@@ -121,17 +124,10 @@ export default function SourceListView({
     setActiveMenu(null);
   };
 
-  if (loading && page === 1) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-primary" size={32} />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
           <StatCard 
             icon={<BookOpen size={24} />} 
             label="总书源" 
@@ -140,18 +136,19 @@ export default function SourceListView({
           />
           <StatCard 
             icon={<CheckCircle2 size={24} />} 
-            label="正常书源" 
+            label="已验证通过"
             value={stats.available.toLocaleString()} 
             color="bg-green-500/10 text-green-600"
           />
           <div className="relative">
             <StatCard 
               icon={<AlertCircle size={24} />} 
-              label="失效书源" 
+              label="确认不可用"
               value={stats.unavailable.toLocaleString()} 
               color="bg-error/10 text-error"
             />
           </div>
+          <StatCard icon={<AlertCircle size={24} />} label="待检测 / 待确认" value={(stats.unchecked || 0).toLocaleString()} color="bg-secondary/10 text-secondary" />
         </div>
 
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -159,16 +156,24 @@ export default function SourceListView({
             <h2 className="text-2xl font-bold tracking-tight">书源管理</h2>
             <p className="text-sm text-secondary mt-1">管理并配置您的所有阅读源站点。</p>
           </div>
-          <div className="flex w-full md:w-auto items-center gap-2">
+          <div className="flex w-full md:w-auto items-center gap-2 flex-wrap">
+            <select aria-label="检测深度" value={checkDepth} disabled={isTestingAll || testingIds.size > 0}
+              onChange={e => { const depth = e.target.value as api.SourceCheckDepth; setCheckDepth(depth); localStorage.setItem('legado_check_depth', depth); }}
+              className="bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 text-xs">
+              <option value="search">快速检测：搜索</option>
+              <option value="content">完整检测：搜索、目录、正文</option>
+            </select>
             <select 
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className="bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-primary transition-all cursor-pointer"
             >
               <option value="all">全部书源</option>
-              <option value="available">仅看正常</option>
+              <option value="available">已验证通过</option>
               <option value="unavailable">仅看不可用</option>
-              <option value="need_login">需要登录</option>
+              <option value="skipped">待确认</option>
+              <option value="unchecked">未检测 / 待复检</option>
+              <option value="need_login">带登录配置</option>
             </select>
 
             <label className="flex items-center gap-1.5 text-xs font-bold bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 select-none cursor-pointer hover:bg-surface-container-low transition-colors shrink-0">
@@ -198,6 +203,7 @@ export default function SourceListView({
           
           {selectedIds.size > 0 && (
             <button 
+              disabled={loading || isTestingAll || [...selectedIds].some(id => testingIds.has(id))}
               onClick={() => handleLocalTest(Array.from(selectedIds))}
               className="bg-tertiary text-on-tertiary px-3 py-1.5 rounded-lg text-xs font-bold hover:opacity-90 flex items-center gap-1.5"
             >
@@ -207,7 +213,7 @@ export default function SourceListView({
 
           <button 
             onClick={handleLocalTestAll}
-            disabled={isTestingAll || cleaning || (loading && testingIds.size > 0)}
+            disabled={cleaning || (loading && testingIds.size > 0 && !isTestingAll)}
             className={`border border-outline-variant bg-surface-container-low text-on-surface px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-surface-container-high flex items-center gap-1.5 disabled:opacity-50 relative overflow-hidden transition-all ${isTestingAll || cleaning ? 'ring-1 ring-primary/30' : ''}`}
             title="对所有书源可用性进行并发测试，并在完成后自动标记禁用重复和失效项"
           >
@@ -217,7 +223,7 @@ export default function SourceListView({
               <ShieldCheck size={14} className={isTestingAll ? 'animate-pulse text-primary' : ''} />
             )}
             {isTestingAll ? (
-              `测试中 ${Math.round((testProgress.current / testProgress.total) * 100)}% (${testProgress.current}/${testProgress.total})`
+              `停止测试 (${testProgress.current}/${testProgress.total})`
             ) : cleaning ? (
               '自动去重标记中...'
             ) : (
@@ -250,6 +256,7 @@ export default function SourceListView({
 
           <button 
             onClick={() => fetchSources(query, page, filter, excludeDuplicate)}
+            title="刷新列表"
             className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors"
           >
             <RefreshCw size={16} className={loading && testingIds.size === 0 ? 'animate-spin' : ''} />
@@ -262,6 +269,15 @@ export default function SourceListView({
           </button>
         </div>
       </div>
+
+      <p className="text-xs text-secondary">完整检测由 reader 执行原书源规则并试读免费章节；带登录配置或要求登录的书源直接禁用。验证、限流和暂时网络错误保留为待确认。</p>
+      {error && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error">
+          <span>加载失败：{error}</span>
+          <button onClick={() => fetchSources(query, page, filter, excludeDuplicate)} className="shrink-0 font-bold">重试</button>
+        </div>
+      )}
+      {loading && <div role="status" className="text-xs text-secondary">正在加载…</div>}
 
       <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto min-h-[400px]">
@@ -327,27 +343,30 @@ export default function SourceListView({
                         </button>
                         {testingIds.has(source.id) ? (
                           <span className="text-[11px] text-tertiary animate-pulse font-bold">测试中...</span>
-                        ) : source.last_checked && (
-                          <span className={`text-[11px] font-bold ${source.is_available ? 'text-green-500' : 'text-error'}`}>
-                            {source.is_available ? '正常' : '不可用'}
+                        ) : (
+                          <span title={source.check_detail || '重新检测后显示具体结果'} className={`text-[11px] font-bold ${source.check_verdict === 'available' ? 'text-green-500' : source.check_verdict === 'unavailable' ? 'text-error' : 'text-secondary'}`}>
+                            {source.check_verdict === 'available' ? '通过' : source.check_reason === 'login-required' || source.check_reason === 'login-redirect' ? '需登录（已禁用）' : source.check_verdict === 'unavailable' ? '不可用' : source.check_verdict === 'skipped' ? '待确认' : source.last_checked ? '待复检' : '未检测'}
                           </span>
                         )}
+                        {source.check_detail && <span className="text-[10px] text-secondary max-w-[220px] truncate" title={source.check_detail}>{source.check_detail}</span>}
                       </div>
                     </td>
                     <td className="py-2 px-4 text-right relative">
                       <button 
-                        onClick={() => setActiveMenu(activeMenu === idx ? null : idx)}
+                        aria-label={`书源操作：${source.name}`}
+                        onClick={() => setActiveMenu(activeMenu === source.id ? null : source.id)}
                         className="p-1 text-secondary hover:text-primary transition-colors"
                       >
                         <MoreVertical size={18} />
                       </button>
                       
-                      {activeMenu === idx && (
+                      {activeMenu === source.id && (
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setActiveMenu(null)} />
                           <div className="absolute right-6 top-10 w-32 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-xl z-20 py-1 overflow-hidden text-left">
-                            <button 
-                              onClick={() => { onTest([source.id]); setActiveMenu(null); }}
+                            <button
+                              disabled={isTestingAll || testingIds.has(source.id)}
+                              onClick={() => { handleLocalTest([source.id]); setActiveMenu(null); }}
                               className="w-full text-left px-4 py-2 text-xs hover:bg-surface-container-low transition-colors flex items-center gap-2"
                             >
                               <Zap size={14} /> 立即测试

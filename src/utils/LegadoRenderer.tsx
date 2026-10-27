@@ -243,7 +243,7 @@ export class LegadoRenderer {
             ctx.globalAlpha = 1.0;
         } else {
             ctx.fillStyle = this.parseAndroidColor(
-                theme.bgStr || "#FFFFFFFF",
+                theme.bgType === 2 ? "#FFEEEEEE" : (theme.bgStr || "#FFFFFFFF"),
                 theme.bgAlpha ?? 100
             );
             ctx.fillRect(0, 0, canvas.width, canvas.height);

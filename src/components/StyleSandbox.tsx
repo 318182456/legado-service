@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import * as api from '../api';
 import { Slider } from './Slider';
+import { loadBackgroundImage } from '../utils/assetUrl';
 import { AssetPicker } from './AssetPicker';
 import { argbToCss, cssToArgb, getHex6 } from '../utils/color';
 import { PREVIEW_TITLE, PREVIEW_PARAS, getTipText } from '../utils/constants';
@@ -272,6 +273,7 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
   const [aiPrevious, setAiPrevious] = useState<any>(null);
   // 配色编辑模式：Legado 有日间/夜间/墨水屏三套
   const [colorMode, setColorMode] = useState<'day' | 'night' | 'eink'>('day');
+  const modeName = { day: '日间', night: '夜间', eink: '墨水屏' }[colorMode];
   // 各模式对应的字段后缀
   const SUFFIX = { day: '', night: 'Night', eink: 'EInk' } as const;
   const sfx = SUFFIX[colorMode];
@@ -353,22 +355,32 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
 
   const [resources, setResources] = useState<any>(null);
   const [bgImageObj, setBgImageObj] = useState<HTMLImageElement | null>(null);
+  const [bgLoading, setBgLoading] = useState(false);
+  const [bgError, setBgError] = useState('');
   const [fontBase64, setFontBase64] = useState('');
   const [jsonText, setJsonText] = useState('');
   const [showJsonImportModal, setShowJsonImportModal] = useState(false);
 
 
 
-  // 预览跟随正在编辑的日间/夜间/墨水屏配色，丢弃旧图片的迟到响应。
+  // 预览跟随当前模式，旧图片加载完成后不能覆盖新选择。
   useEffect(() => {
     let active = true;
     setBgImageObj(null);
-    if (previewBgType === 2 && previewBgStr && !isLocalDevicePath(previewBgStr)) {
-      const url = previewBgStr.startsWith('blob:') ? previewBgStr : `${window.location.origin}/repo/${previewBgStr.split('/').map(s => encodeURIComponent(s)).join('/')}`;
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => { if (active) setBgImageObj(img); };
-      img.src = url;
+    setBgError('');
+    const hasImage = previewBgType === 2 && !!previewBgStr;
+    setBgLoading(hasImage);
+    if (hasImage) {
+      if (isLocalDevicePath(previewBgStr)) {
+        setBgError('设备本地图片无法在网页读取，请从背景资源库重新选择');
+        setBgLoading(false);
+      } else {
+        loadBackgroundImage(previewBgStr).then(img => {
+          if (active) setBgImageObj(img);
+        }).catch(error => {
+          if (active) setBgError(error.message);
+        }).finally(() => { if (active) setBgLoading(false); });
+      }
     }
     return () => { active = false; };
   }, [previewBgStr, previewBgType]);
@@ -754,7 +766,7 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     renderer.scale = pixelRatio;
 
     await renderer.renderTheme(cfg, {
-      bgImage: bgImageObj,
+      bgImage: cfg.bgType === 2 ? await loadBackgroundImage(cfg.bgStr) : null,
       getTipText,
       PREVIEW_TITLE,
       PREVIEW_PARAS
@@ -806,11 +818,14 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
           finalConfig._textFontSourceZip, finalConfig._textFontSourceFile
         );
       }
-      if (finalConfig.bgType === 2 && finalConfig.bgStr) {
-        finalConfig.bgStr = await syncAsset(
-          finalConfig.bgStr, 'bg', finalConfig._bgStrName,
-          finalConfig._bgStrSourceZip, finalConfig._bgStrSourceFile
-        );
+      for (const suffix of ['', 'Night', 'EInk']) {
+        const field = 'bgStr' + suffix;
+        if (finalConfig['bgType' + suffix] === 2 && finalConfig[field]) {
+          finalConfig[field] = await syncAsset(
+            finalConfig[field], 'bg', finalConfig['_bgStrName' + suffix],
+            finalConfig['_bgStrSourceZip' + suffix], finalConfig['_bgStrSourceFile' + suffix],
+          );
+        }
       }
 
       setSyncStatus('正在生成高保真预览图...');
@@ -887,7 +902,7 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                 device={device} 
                 fontFamily={selectedFontName} 
                 bgImage={bgImageObj} 
-                loading={loading}
+                loading={loading || bgLoading}
               />
             </div>
           </div>
@@ -1002,9 +1017,13 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                       恢复为跟随日间配色
                     </button>
                   )}
+                  <p className="text-[10px] text-outline leading-relaxed">
+                    正在设置{modeName}：选择颜色会替换背景图，选择图片则使用图片背景。三种模式分别保存。
+                  </p>
+                  {bgError && <div role="alert" className="text-[11px] text-error">{bgError}</div>}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <span className="text-[10px] text-secondary">背景色</span>
+                      <span className="text-[10px] text-secondary">{previewBgType === 2 ? '改用纯色背景' : '背景色'}</span>
                       <input
                         type="color"
                         value={getHex6(curVal('bgStr'))}
@@ -1050,9 +1069,9 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                         <ImageIcon size={20} />
                       </div>
                       <div className="flex-1 text-left">
-                        <div className="text-[10px] text-secondary opacity-60 uppercase tracking-tighter mb-0.5">背景资源</div>
+                        <div className="text-[10px] text-secondary opacity-60 uppercase tracking-tighter mb-0.5">{modeName}背景资源</div>
                         <div className="truncate">
-                          {config.bgType === 0 ? '纯色' : getAssetName(config.bgStr, 'backgrounds', config._bgStrName)}
+                          {previewBgType === 0 ? '纯色' : getAssetName(previewBgStr, 'backgrounds', config['_bgStrName' + sfx])}
                         </div>
                       </div>
                       <ChevronRight size={16} className="text-outline opacity-40" />
@@ -1265,18 +1284,14 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                   loadFont(r.path, r.name); 
                   setManualAssets(p => ({ ...p, font: true })); 
                 }
-                else if (showPicker === 'bg') { 
-                  if (r.path.endsWith('.zip') || r.path.endsWith('.json')) {
-                    loadBaseConfig(r.path.endsWith('.zip') ? 'zip' : 'theme', r);
-                  } else {
-                    const isBlob = r.path.startsWith('blob:');
-                    setConfig(prev => {
-                      const next = { ...prev, bgStr: r.path, bgType: 2 };
-                      if (isBlob) next._bgStrName = r.name;
-                      return next;
-                    });
-                    setManualAssets(p => ({ ...p, bg: true })); 
-                  }
+                else if (showPicker === 'bg') {
+                  setConfig(prev => {
+                    const next = { ...prev, ['bgStr' + sfx]: r.path, ['bgType' + sfx]: 2, ['_bgStrName' + sfx]: r.name };
+                    delete next['_bgStrSourceZip' + sfx];
+                    delete next['_bgStrSourceFile' + sfx];
+                    return next;
+                  });
+                  if (colorMode === 'day') setManualAssets(p => ({ ...p, bg: true }));
                 }
                 else if (showPicker === 'layout') { 
                   loadBaseConfig(r.path.endsWith('.zip') ? 'zip' : 'theme', r); 

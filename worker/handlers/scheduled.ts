@@ -1,3 +1,4 @@
+import { sourceCheckOptions, persistSourceChecks, type SourceCheckRecord } from "../source-check";
 import { Env } from "../types";
 import {
   ensureDatabase,
@@ -32,40 +33,30 @@ export async function handleScheduled(env: Env) {
 
     // 2. 检查书源可用性 — 并发请求 + batch 写入
     const { results: sources } = await env.DB.prepare(
-      "SELECT id, book_source_url, raw_json FROM sources WHERE enabled = 1 ORDER BY last_checked ASC LIMIT 100"
+      "SELECT id, book_source_url, raw_json, updated_at FROM sources WHERE enabled = 1 ORDER BY last_checked ASC LIMIT 100"
     ).all();
     
     console.log(`Checking availability for ${sources.length} sources...`);
 
     if (sources.length > 0) {
       const verdicts: Record<number, CheckVerdict> = {};
+      const records: SourceCheckRecord[] = [];
+      const checkOptions = await sourceCheckOptions(env);
       await runWorkerPool({
         taskType: "test-sources",
         items: (sources as any[]).map(s => ({
           id: s.id,
           book_source_url: s.book_source_url,
-          raw_json: s.raw_json
+          raw_json: s.raw_json, checkOptions
         })),
-        concurrencyPerThread: 10,
+        threadCount: 2, concurrencyPerThread: 3,
         onResult: (msg) => {
-          verdicts[msg.id] = msg.verdict || "unavailable";
+          verdicts[msg.id] = msg.verdict || "skipped";
+          records.push({ id: msg.id, verdict: verdicts[msg.id], reason: msg.reason || "task-error", detail: msg.detail, duration: msg.duration, version: (sources as any[]).find(s => s.id === msg.id)?.updated_at });
         }
       });
 
-      // 无法判定的源保留上次的 is_available，只推进 last_checked，
-      // 否则下一轮 ORDER BY last_checked 会一直重复挑中它们
-      const stmts = (sources as any[]).map(src => {
-        const verdict = verdicts[src.id];
-        if (verdict === "skipped") {
-          return env.DB.prepare(
-            "UPDATE sources SET last_checked = datetime('now') WHERE id = ?"
-          ).bind(src.id);
-        }
-        return env.DB.prepare(
-          "UPDATE sources SET is_available = ?, last_checked = datetime('now') WHERE id = ?"
-        ).bind(verdict === "available" ? 1 : 0, src.id);
-      });
-      await env.DB.batch(stmts);
+      await persistSourceChecks(env, records);
 
       const counts = countVerdicts(sources as any[], verdicts);
       console.log(`Availability check done: available=${counts.available}, unavailable=${counts.unavailable}, skipped=${counts.skipped}`);

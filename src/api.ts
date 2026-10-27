@@ -50,7 +50,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(path, { ...options, headers });
-  
+
   // 提前解析 JSON 以便统一处理 ok 字段
   const body = (await res.json().catch(() => ({ ok: false, error: res.statusText }))) as {
     ok?: boolean;
@@ -129,7 +129,7 @@ export const getStats = () => apiFetch<Stats>("/api/stats");
 
 export const getSubscriptions = () => apiFetch<Subscription[]>("/api/subscriptions");
 
-export const addSubscription = (data: { name: string; url: string; type: "source" | "rule" }) =>
+export const addSubscription = (data: { name: string; url: string; type: "source" | "rule" | "txtTocRule" | "dictRule" }) =>
   apiFetch<any>("/api/subscriptions", { method: "POST", body: JSON.stringify(data) });
 
 export const deleteSubscription = (id: number) =>
@@ -138,14 +138,22 @@ export const deleteSubscription = (id: number) =>
 export const toggleSubscription = (id: number, enabled: boolean) =>
   apiFetch<any>(`/api/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
 
-export const syncAll = () => apiFetch<any>("/api/sync", { method: "POST" });
-export const syncOne = (id: number) => apiFetch<any>(`/api/sync/${id}`, { method: "POST" });
+export interface SyncSummary {
+  total: number; succeeded: number; failed: number; skipped: number;
+  failures: { id: number; name: string; error: string }[];
+}
+export function describeSync(summary: SyncSummary): string {
+  const result = `同步完成：成功 ${summary.succeeded}，失败 ${summary.failed}，跳过 ${summary.skipped}（本地手动分组）`;
+  return result + (summary.failed ? '\n' + summary.failures.map(item => `${item.name}：${item.error}`).join('\n') : '');
+}
+export const syncAll = () => apiFetch<SyncSummary>("/api/sync", { method: "POST" });
+export const syncOne = (id: number) => apiFetch<SyncSummary>(`/api/sync/${id}`, { method: "POST" });
 
-export const getSources = (q = "", page = 1, filter = "all", excludeDuplicate = false) => 
-  apiFetch<{ sources: any[], total: number, totalPages: number, stats: any, hasMore: boolean }>(`/api/sources?q=${q}&page=${page}&filter=${filter}&exclude_duplicate=${excludeDuplicate}`);
+export const getSources = (q = "", page = 1, filter = "all", excludeDuplicate = false, signal?: AbortSignal) =>
+  apiFetch<{ sources: any[], total: number, totalPages: number, stats: any, page: number, hasMore: boolean }>(`/api/sources?${new URLSearchParams({ q, page: String(page), filter, exclude_duplicate: String(excludeDuplicate) })}`, { signal });
 export const getAllSourceIds = () => apiFetch<number[]>("/api/sources/ids");
-export const getRules = (q = "", page = 1) => 
-  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number, hasMore: boolean }>(`/api/rules?q=${q}&page=${page}`);
+export const getRules = (q = "", page = 1, signal?: AbortSignal) =>
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number, hasMore: boolean }>(`/api/rules?${new URLSearchParams({ q, page: String(page) })}`, { signal });
 export const addRule = (data: { name: string; pattern: string; replacement: string }) => apiFetch<any>("/api/rules", { method: "POST", body: JSON.stringify(data) });
 
 export const getResources = () => apiFetch<any>("/api/resources");
@@ -153,16 +161,17 @@ export const refreshResources = () => apiFetch<any>("/api/resources/refresh", { 
 
 /** verdict 为 skipped 表示本地无法判定（动态 JS 规则等），该源的可用状态保持不变 */
 export type SourceCheckVerdict = "available" | "unavailable" | "skipped";
-export const testSources = (ids: number[]) =>
+export type SourceCheckDepth = 'search' | 'content';
+export const testSources = (ids: number[], depth: SourceCheckDepth = 'search') =>
   apiFetch<{
     verdicts: Record<number, SourceCheckVerdict>;
     reasons: Record<number, string>;
     summary: { available: number; unavailable: number; skipped: number };
-  }>("/api/sources/test", { method: "POST", body: JSON.stringify({ ids }) });
-export const testAllSources = () => apiFetch<any>("/api/sources/test/all", { method: "POST" });
+  }>("/api/sources/test", { method: "POST", body: JSON.stringify({ ids, depth }) });
+export const testAllSources = (depth: SourceCheckDepth = 'search') => apiFetch<any>("/api/sources/test/all", { method: "POST", body: JSON.stringify({ depth }) });
 export const stopTestSources = () => apiFetch<any>("/api/sources/test/stop", { method: "POST" });
-export const getTestProgress = () => 
-  apiFetch<{ current: number; total: number; running: boolean }>("/api/sources/test/progress");
+export const getTestProgress = () =>
+  apiFetch<{ current: number; total: number; running: boolean; status?: "running" | "completed" | "stopped" | "failed" }>("/api/sources/test/progress");
 export const toggleSource = (id: number, enabled: boolean) => apiFetch<any>(`/api/sources/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
 export const deleteSource = (id: number) => apiFetch<any>(`/api/sources/${id}`, { method: "DELETE" });
 export const deleteAllSources = () => apiFetch<any>("/api/sources/all", { method: "DELETE" });
@@ -171,16 +180,16 @@ export const toggleRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/
 export const deleteRule = (id: number) => apiFetch<any>(`/api/rules/${id}`, { method: "DELETE" });
 export const updateRule = (id: number, data: { name: string; pattern: string; replacement: string }) => apiFetch<any>(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const getTxtTocRules = (q = "", page = 1) =>
-  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/txt-toc-rules?q=${q}&page=${page}`);
+export const getTxtTocRules = (q = "", page = 1, signal?: AbortSignal) =>
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/txt-toc-rules?${new URLSearchParams({ q, page: String(page) })}`, { signal });
 export const addTxtTocRule = (data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>("/api/txt-toc-rules", { method: "POST", body: JSON.stringify(data) });
 export const updateTxtTocRule = (id: number, data: { name: string; rule: string; example?: string; serialNumber?: number }) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const toggleTxtTocRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
 export const deleteTxtTocRule = (id: number) => apiFetch<any>(`/api/txt-toc-rules/${id}`, { method: "DELETE" });
 export const importTxtTocRules = (rules: any[]) => apiFetch<any>("/api/txt-toc-rules/import", { method: "POST", body: JSON.stringify({ rules }) });
 
-export const getDictRules = (q = "", page = 1) =>
-  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/dict-rules?q=${q}&page=${page}`);
+export const getDictRules = (q = "", page = 1, signal?: AbortSignal) =>
+  apiFetch<{ rules: any[], total: number, totalPages: number, page: number, limit: number }>(`/api/dict-rules?${new URLSearchParams({ q, page: String(page) })}`, { signal });
 export const addDictRule = (data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>("/api/dict-rules", { method: "POST", body: JSON.stringify(data) });
 export const updateDictRule = (id: number, data: { name: string; urlRule: string; showRule?: string; sortNumber?: number }) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const toggleDictRule = (id: number, enabled: boolean) => apiFetch<any>(`/api/dict-rules/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabled ? 1 : 0 }) });
@@ -198,9 +207,9 @@ export const deleteParseHistory = (url?: string) =>
   apiFetch<any>(`/api/parse-history${url ? `?url=${encodeURIComponent(url)}` : ""}`, { method: "DELETE" });
 
 export const getCustomThemes = () => apiFetch<any[]>(`/api/custom-themes?t=${Date.now()}`);
-export const saveCustomTheme = (data: { name: string; config: string; preview_url?: string }) => 
+export const saveCustomTheme = (data: { name: string; config: string; preview_url?: string }) =>
   apiFetch<any>("/api/custom-themes", { method: "POST", body: JSON.stringify(data) });
-export const deleteCustomTheme = (id: number) => 
+export const deleteCustomTheme = (id: number) =>
   apiFetch<any>(`/api/custom-themes/${id}`, { method: "DELETE" });
 
 export interface ThemeSuggestion {
@@ -237,19 +246,19 @@ export const ensureAsset = async (file: Blob, category: string, name: string) =>
   return body.path as string;
 };
 
-export const listZipAssets = (path: string) => 
+export const listZipAssets = (path: string) =>
   apiFetch<{ name: string; path: string; size: number }[]>(`/api/zip/list?path=${encodeURIComponent(path)}`);
 
-export const extractAssetFromZip = (zipPath: string, internalPath: string, category: string) => 
-  apiFetch<{ path: string }>("/api/zip/extract", { 
-    method: "POST", 
-    body: JSON.stringify({ zipPath, internalPath, category }) 
+export const extractAssetFromZip = (zipPath: string, internalPath: string, category: string) =>
+  apiFetch<{ path: string }>("/api/zip/extract", {
+    method: "POST",
+    body: JSON.stringify({ zipPath, internalPath, category })
   });
 
-export const getSystemVersion = () => 
+export const getSystemVersion = () =>
   apiFetch<{ current: string, latest: string, hasUpdate: boolean, changelog?: string }>("/api/system/version");
 
-export const performUpdate = () => 
+export const performUpdate = () =>
   apiFetch<any>("/api/system/update", { method: "POST" });
 
 export const getSystemConfig = () =>
