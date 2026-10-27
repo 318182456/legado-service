@@ -516,6 +516,7 @@ export async function handleSuggestTheme(request: Request, env: Env): Promise<Re
   const body = await request.json().catch(() => ({})) as any;
   const prompt = String(body?.prompt ?? "").trim();
   if (!prompt) return err("请描述想要的主题");
+  if (prompt.length > 2000) return err("主题描述请控制在 2000 字以内");
 
   // 从资源索引里取真实存在的字体与背景，避免模型编造文件名
   const raw = await env.KV.get("resources-index");
@@ -552,12 +553,20 @@ export async function handleSuggestTheme(request: Request, env: Env): Promise<Re
     return Array.from({ length: limit }, (_, i) => uniq[Math.floor(i * step)]);
   };
 
-  const fonts = sample(collect(["fonts"], /\.(ttf|otf|ttc)$/i), 70);
-  const backgrounds = sample(collect(["themes", "layouts", "bg", "backgrounds"], /\.(png|jpe?g|webp)$/i), 50);
+  const allFonts = collect(["fonts"], /\.(ttf|otf|ttc)$/i);
+  const allBackgrounds = collect(["themes", "layouts", "bg", "backgrounds"], /\.(png|jpe?g|webp)$/i);
+  const fonts = sample(allFonts, 70);
+  const backgrounds = sample(allBackgrounds, 50);
+  // 连续调整必须仍能看到当前资源，不能因均匀采样而无意清掉字体或背景。
+  const keepCurrent = (list: string[], all: string[], value: unknown) => {
+    if (typeof value === "string" && all.includes(value) && !list.includes(value)) list.push(value);
+  };
+  keepCurrent(fonts, allFonts, body?.current?.textFont);
+  keepCurrent(backgrounds, allBackgrounds, body?.current?.bgImage);
 
   try {
     const { suggestTheme } = await import("../theme-ai");
-    const suggestion = await suggestTheme(env, { prompt, fonts, backgrounds });
+    const suggestion = await suggestTheme(env, { prompt, fonts, backgrounds, current: body?.current && typeof body.current === "object" && !Array.isArray(body.current) ? body.current : undefined });
     return new Response(JSON.stringify({ ok: true, data: suggestion }), {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });

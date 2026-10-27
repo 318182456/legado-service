@@ -446,7 +446,7 @@ export default function ReviewsView() {
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="每章总条数（1-40）">
+              <Field label="每章主评上限（1-40）">
                 <input
                   type="number"
                   min={1}
@@ -473,10 +473,10 @@ export default function ReviewsView() {
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
                 />
                 <span className="text-xs text-secondary mt-1 block">
-                  评论向这几段集中，每段 3-6 条，其余段落大多留白
+                  评论优先集中在这些热点，短章节可以减少，其余段落大多留白
                 </span>
               </Field>
-              <Field label="回复链层数（1-5）">
+              <Field label="每条主评最多回复数（1-5）">
                 <input
                   type="number"
                   min={1}
@@ -486,7 +486,7 @@ export default function ReviewsView() {
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm"
                 />
                 <span className="text-xs text-secondary mt-1 block">
-                  接话、抬杠、原作者再回一句，越深越像真实讨论
+                  有接话点时才生成回复，不强行凑对话
                 </span>
               </Field>
               <Field label="预生成章数（0 关闭）">

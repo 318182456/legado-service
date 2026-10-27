@@ -269,6 +269,7 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiNote, setAiNote] = useState('');
+  const [aiPrevious, setAiPrevious] = useState<any>(null);
   // 配色编辑模式：Legado 有日间/夜间/墨水屏三套
   const [colorMode, setColorMode] = useState<'day' | 'night' | 'eink'>('day');
   // 各模式对应的字段后缀
@@ -282,6 +283,8 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     (config['textColor' + sfx] ?? config.textColor) !== config.textColor ||
     (config['bgType' + sfx] ?? config.bgType) !== config.bgType
   );
+  const previewBgStr = curVal('bgStr');
+  const previewBgType = curVal('bgType');
   // AI 出的方案只预填进 config，不自动保存，留给用户继续调
   const applyAiSuggestion = async () => {
     const q = aiPrompt.trim();
@@ -289,7 +292,19 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
     setAiLoading(true);
     setAiNote('');
     try {
-      const s = await api.suggestTheme(q);
+      const before = { config: { ...config }, manualAssets: { ...manualAssets }, selectedFontName, fontBase64 };
+      const s = await api.suggestTheme(q, {
+        name: config.name,
+        bgStr: config.bgType === 2 ? '#EEEEEE' : getHex6(config.bgStr),
+        textColor: getHex6(config.textColor),
+        bgStrNight: getHex6(config.bgStrNight), textColorNight: getHex6(config.textColorNight),
+        textFont: config.textFont || '', bgImage: config.bgType === 2 ? config.bgStr : '',
+        tipColor: config.tipColor ? getHex6(config.tipColor) : '',
+        textSize: config.textSize, lineSpacingExtra: config.lineSpacingExtra,
+        paragraphSpacing: config.paragraphSpacing, letterSpacing: config.letterSpacing,
+        paddingLeft: config.paddingLeft, paddingRight: config.paddingRight, textBold: config.textBold,
+      });
+      setAiPrevious(before);
       setConfig((prev: any) => {
         const next = {
           ...prev,
@@ -303,6 +318,9 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
           bgStrEInk: cssToArgb(s.bgStrEInk),
           bgTypeEInk: 0,
           textColorEInk: cssToArgb(s.textColorEInk),
+          darkStatusIcon: true,
+          darkStatusIconNight: false,
+          darkStatusIconEInk: true,
         };
         // 页眉页脚色：模型留空表示跟随正文色，Legado 用 0 表示这个意思
         next.tipColor = s.tipColor ? cssToArgb(s.tipColor) : 0;
@@ -319,11 +337,12 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
           next.bgStr = s.bgImage;
           next.bgType = 2;
         }
-        if (s.textFont) next.textFont = s.textFont;
+        next.textFont = s.textFont || '';
         return next;
       });
-      if (s.bgImage) setManualAssets(p => ({ ...p, bg: true }));
-      if (s.textFont) setManualAssets(p => ({ ...p, font: true }));
+      setManualAssets({ bg: !!s.bgImage, font: !!s.textFont });
+      if (s.textFont) await loadFont(s.textFont, s.textFont.split('/').pop() || '');
+      else { setSelectedFontName(''); setFontBase64(''); }
       setAiNote(s.note || '已生成');
     } catch (e) {
       setAiNote('生成失败: ' + String((e as Error).message || e));
@@ -340,18 +359,19 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
 
 
 
-  // 预加载背景图为 Image 对象
+  // 预览跟随正在编辑的日间/夜间/墨水屏配色，丢弃旧图片的迟到响应。
   useEffect(() => {
-    if (config.bgType === 2 && config.bgStr && !isLocalDevicePath(config.bgStr)) {
-      const url = config.bgStr.startsWith('blob:') ? config.bgStr : `${window.location.origin}/repo/${config.bgStr.split('/').map(s => encodeURIComponent(s)).join('/')}`;
+    let active = true;
+    setBgImageObj(null);
+    if (previewBgType === 2 && previewBgStr && !isLocalDevicePath(previewBgStr)) {
+      const url = previewBgStr.startsWith('blob:') ? previewBgStr : `${window.location.origin}/repo/${previewBgStr.split('/').map(s => encodeURIComponent(s)).join('/')}`;
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.onload = () => setBgImageObj(img);
+      img.onload = () => { if (active) setBgImageObj(img); };
       img.src = url;
-    } else {
-      setBgImageObj(null);
     }
-  }, [config.bgStr, config.bgType]);
+    return () => { active = false; };
+  }, [previewBgStr, previewBgType]);
   const [manualAssets, setManualAssets] = useState(() => ({
     bg: initialType === 'bg',
     font: initialType === 'font'
@@ -863,7 +883,7 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
           
             <div className="flex-1 relative flex flex-col overflow-hidden" style={{ borderRadius: `${device.innerRadius}px` }}>
               <CanvasPreview 
-                config={config} 
+                config={{ ...config, bgStr: previewBgStr, bgType: previewBgType, textColor: curVal('textColor'), darkStatusIcon: curVal('darkStatusIcon') }}
                 device={device} 
                 fontFamily={selectedFontName} 
                 bgImage={bgImageObj} 
@@ -921,10 +941,11 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                     </div>
                     <div className="flex gap-2">
                       <input
+                        maxLength={2000}
                         value={aiPrompt}
                         onChange={(e) => setAiPrompt(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') applyAiSuggestion(); }}
-                        placeholder="描述想要的主题，如：护眼的墨绿色"
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) applyAiSuggestion(); }}
+                        placeholder="描述主题或继续调整，如：墨绿色、字号大一点"
                         className="flex-1 bg-surface-container border border-outline-variant rounded-xl px-3 py-2 text-[11px] outline-none focus:border-primary"
                       />
                       <button
@@ -936,11 +957,25 @@ export function StyleSandbox({ initialBase, initialType, onClose, onSaved, fileT
                         {aiLoading ? '生成中' : '生成'}
                       </button>
                     </div>
+                    {aiPrevious && (
+                      <button
+                        disabled={aiLoading}
+                        onClick={() => {
+                          setConfig(aiPrevious.config);
+                          setManualAssets(aiPrevious.manualAssets);
+                          setSelectedFontName(aiPrevious.selectedFontName);
+                          setFontBase64(aiPrevious.fontBase64);
+                          setAiPrevious(null);
+                          setAiNote('已撤销本次生成');
+                        }}
+                        className="text-[11px] text-primary disabled:opacity-40"
+                      >撤销本次生成</button>
+                    )}
                     {aiNote && (
                       <div className="text-[10px] text-outline leading-relaxed">{aiNote}</div>
                     )}
                     <div className="text-[9px] text-outline opacity-60">
-                      生成结果只预填到下方，确认满意再保存
+                      可基于当前方案连续调整，支持撤销；满意后再保存
                     </div>
                   </div>
                   <div className="flex gap-1 p-1 bg-surface-container rounded-xl">

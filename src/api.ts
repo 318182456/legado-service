@@ -212,10 +212,10 @@ export interface ThemeSuggestion {
   textSize: number; lineSpacingExtra: number; paragraphSpacing: number;
   letterSpacing: number; paddingLeft: number; paddingRight: number; textBold: number;
 }
-export const suggestTheme = (prompt: string) =>
+export const suggestTheme = (prompt: string, current?: Partial<ThemeSuggestion>) =>
   apiFetch<ThemeSuggestion>("/api/custom-themes/suggest", {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, current }),
   });
 
 export const ensureAsset = async (file: Blob, category: string, name: string) => {
