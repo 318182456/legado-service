@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, AlertCircle, ImageIcon, FileText, Archive } from 'lucide-react';
 import { LegadoRendererComponent } from '../utils/LegadoRenderer';
+import { getResources } from '../api';
 
 const isLocalDevicePath = (p: string) => {
   if (!p) return false;
@@ -18,9 +19,9 @@ export function ThemeThumbnail({ path, name, config: initialConfig, previewUrl: 
   const [textContent, setTextContent] = useState<string>('');
 
   useEffect(() => {
-    import('../api').then(api => {
-      api.getResources().then(setResources);
-    });
+    let active = true;
+    getResources().then(data => { if (active) setResources(data); }).catch(() => {});
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {

@@ -177,7 +177,7 @@ export async function readerPost(
   const url = `${base}/reader3${path}${accessToken ? `?accessToken=${encodeURIComponent(accessToken)}` : ""}`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(new DOMException(`reader ${path} 请求超时（30 秒）`, 'TimeoutError')), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -207,7 +207,7 @@ export async function readerGetBookshelf(
   const url = `${base}/reader3/getBookshelf${accessToken ? `?accessToken=${encodeURIComponent(accessToken)}` : ""}`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(new DOMException('reader 书架请求超时（30 秒）', 'TimeoutError')), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`reader HTTP ${res.status}`);
@@ -383,7 +383,7 @@ export async function readerLogin(
 ): Promise<string> {
   const base = readerUrl.replace(/\/+$/, "");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(new DOMException('reader 登录请求超时（30 秒）', 'TimeoutError')), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`${base}/reader3/login`, {
       method: "POST",

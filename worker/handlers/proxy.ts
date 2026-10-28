@@ -70,7 +70,7 @@ function rewriteWebdavHref(xml: string): string {
   );
 }
 
-export async function proxyToReader(request: Request, readerUrl: string): Promise<Response> {
+export async function proxyToReader(request: Request, readerUrl: string, options: { headerTimeoutMs?: number } = {}): Promise<Response> {
   const url = new URL(request.url);
   
   // 确保拼接后的 URL 正确，处理 readerUrl 尾部斜杠问题
@@ -114,12 +114,17 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
     try {
       reqInit.body = await request.arrayBuffer();
     } catch (e) {
-      console.error('[Proxy] 读取请求体失败:', e);
+      return Response.json({ isSuccess: false, errorMsg: '请求已取消或请求体读取失败' }, { status: request.signal.aborted ? 499 : 400 });
     }
   }
 
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new DOMException('reader 响应头超时', 'TimeoutError')), options.headerTimeoutMs ?? 60_000);
+  reqInit.signal = AbortSignal.any([request.signal, deadline.signal]);
   try {
     const res = await fetch(targetUrl, reqInit);
+    // 只限制响应头等待；SSE 和 WebDAV 文件流可继续传输，并保留调用方取消信号。
+    clearTimeout(timer);
 
     const responseHeaders = new Headers();
     // 复制目标服务器的响应头，逐段传输头与 set-cookie 除外
@@ -274,16 +279,21 @@ export async function proxyToReader(request: Request, readerUrl: string): Promis
       headers: responseHeaders,
     });
   } catch (err) {
-    console.error('[Proxy] 代理请求失败:', err);
+    if (request.signal.aborted) return new Response(null, { status: 499 });
+    const code = (err as any)?.cause?.code ?? (err as any)?.code;
+    const timedOut = deadline.signal.aborted || code === 'UND_ERR_HEADERS_TIMEOUT';
+    console.warn(`[Proxy] ${timedOut ? '等待 reader 响应超时' : '连接 reader 失败'}${code ? ` (${code})` : ''}`);
     return new Response(JSON.stringify({
       isSuccess: false,
-      errorMsg: `无法连接到本地 Reader 后端服务。请检查 Reader 容器运行状态或配置 (READER_URL: ${cleanReaderUrl})`
+      errorMsg: timedOut ? 'reader 响应超时，请稍后重试或检查 reader 负载' : '无法连接到 Reader 后端服务，请检查容器状态和地址配置'
     }), {
-      status: 500,
+      status: timedOut ? 504 : 502,
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       }
     });
+  } finally {
+    clearTimeout(timer);
   }
 }

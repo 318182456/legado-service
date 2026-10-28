@@ -563,7 +563,7 @@ export async function ensureDatabase(env: Env): Promise<void> {
           schemaVerified = true;
           return;
         } catch (e) {
-          console.warn("数据库标志位存在但核心表缺失，正在强制重新初始化...");
+          console.warn("数据库结构快速检查未通过，正在检查并同步表结构...");
           needInit = true;
         }
       } else {
