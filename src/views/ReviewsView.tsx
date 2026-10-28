@@ -52,6 +52,7 @@ export default function ReviewsView() {
   const [saving, setSaving] = useState(false);
   const [mixin, setMixin] = useState('');
   const [injecting, setInjecting] = useState(false);
+  const [ruleAutoInject, setRuleAutoInject] = useState(true);
   const [markName, setMarkName] = useState(true);
   const [mark, setMark] = useState('💬');
   const [injectResult, setInjectResult] = useState<api.InjectResult | null>(null);
@@ -92,6 +93,9 @@ export default function ReviewsView() {
       setRetainDays(String(cfg.retainDays));
       setPersonas(cfg.personas.join('\n'));
       setAutoFetch(cfg.autoFetch);
+      setRuleAutoInject(cfg.ruleAutoInject ?? true);
+      setMarkName(cfg.ruleMarkName ?? true);
+      setMark(cfg.ruleMark ?? '💬');
       setReaderUrl(cfg.readerUrl);
       if (cfg.readerAuth?.startsWith('已登录')) {
         setReaderUser(cfg.readerAuth.replace(/^已登录（|）$/g, ''));
@@ -240,9 +244,26 @@ export default function ReviewsView() {
     }
   };
 
+  const handleSaveRuleAccess = async () => {
+    setInjecting(true);
+    try {
+      await api.saveSystemConfig({
+        review_auto_inject: ruleAutoInject ? '1' : '0',
+        review_auto_mark_name: markName ? '1' : '0',
+        review_auto_mark: mark.trim() || '💬',
+      });
+      setInjectResult(null);
+      alert('接入设置已保存，App 下次更新订阅时生效');
+    } catch (e) {
+      alert('保存失败: ' + String(e));
+    } finally {
+      setInjecting(false);
+    }
+  };
+
   const handleInject = async (revoke: boolean) => {
     const msg = revoke
-      ? '撤销注入？只会清掉本服务写进去的段评规则，别人手配的和 JS 书源都不动。'
+      ? '关闭自动接入并撤销以前写入的段评规则？已有其他段评规则的书源和 JS 书源会保留。App 更新订阅后生效。'
       : '给订阅里的规则书源批量写入段评规则？JS 书源会跳过（它们该用混入脚本），已有其他段评规则的源也不会被覆盖。';
     if (!confirm(msg)) return;
 
@@ -250,6 +271,7 @@ export default function ReviewsView() {
     try {
       const r = await api.injectReviewRule({ revoke, markName, mark });
       setInjectResult(r);
+      if (revoke) setRuleAutoInject(false);
       if (!revoke && !r.hasToken) {
         alert(
           `已写入 ${r.changed} 个书源。\n\n注意：你还没配访问令牌，/review/* 目前是完全公开的。` +
@@ -636,14 +658,19 @@ export default function ReviewsView() {
 
         <div className="p-6 space-y-6">
           <div>
-            <p className="text-sm font-medium">A · 规则书源批量注入（推荐）</p>
+            <p className="text-sm font-medium">A · 规则书源自动接入</p>
             <p className="text-xs text-secondary mt-1 mb-3">
-              给订阅里的规则书源写入段评规则，App 同步订阅后即可生效。
+              更新订阅时自动附加段评规则，现有、新增和同步后的书源均会接入，无需手动批量注入。
+              访问令牌或域名变化后，App 更新订阅即可获取最新规则。
               JS 书源会自动跳过，已有其他段评规则的源不会被覆盖。
               开启上方「借 reader 自动抓正文」后，<strong>这类书源同样会自动生成 AI 段评</strong>，
               你只需要正常读书。首次进某一章图标不会立刻出现——后台抓正文加生成需要几秒，
               翻页回来或下次进入即可看到。
             </p>
+            <label className="flex items-center gap-2 mb-3 text-sm cursor-pointer select-none">
+              <input type="checkbox" checked={ruleAutoInject} onChange={(e) => setRuleAutoInject(e.target.checked)} disabled={injecting} className="accent-primary" />
+              <span>自动为规则书源接入段评（默认开启）</span>
+            </label>
             <label className="flex items-center gap-2 mb-3 text-xs cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -666,12 +693,12 @@ export default function ReviewsView() {
 
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => handleInject(false)}
+                onClick={handleSaveRuleAccess}
                 disabled={injecting}
                 className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50"
               >
                 <Syringe size={16} />
-                {injecting ? '处理中...' : '注入全部规则书源'}
+                {injecting ? '保存中...' : '保存接入设置'}
               </button>
               <button
                 onClick={() => handleInject(true)}
@@ -679,7 +706,7 @@ export default function ReviewsView() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-outline-variant hover:bg-surface-container-low disabled:opacity-50"
               >
                 <Undo2 size={16} />
-                撤销注入
+                关闭并撤销旧注入
               </button>
             </div>
 
@@ -978,12 +1005,12 @@ export default function ReviewsView() {
                       : m.isJsSource
                         ? 'JS 书源 —— 段评走 mainJs 里的函数，ruleReview 对它无效'
                         : !m.hasReviewRule
-                          ? '没有 ruleReview 字段，请点上方「注入全部规则书源」'
+                          ? '未接入段评，请开启上方自动接入并更新 App 订阅'
                           : !m.reviewEnabled
                             ? 'ruleReview 存在但 enabled 不为 true'
                             : m.missingFields.length
                               ? `缺少必填字段：${m.missingFields.join('、')}`
-                              : '服务端规则完整。App 若仍无图标，问题在 App 侧（版本或未重新导入书源）'}
+                              : '订阅下发规则完整；请在 App 更新订阅后重新进入章节'}
                   </p>
                   {m.probeUrl && (
                     <p className="break-all">

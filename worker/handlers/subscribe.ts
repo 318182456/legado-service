@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { rebuildCache } from "../utils";
+import { automaticallyInjectReviewRules } from "../review-rule";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_STR = fs.readFileSync(path.join(__dirname, "subscribe.html"), "utf-8");
@@ -15,23 +16,25 @@ const TYPE_MAP = {
   dictRules: "dictRule",
 } as const;
 
-export async function handleSubscribeOutput(env: Env, type: keyof typeof TYPE_MAP): Promise<Response> {
+export async function handleSubscribeOutput(env: Env, type: keyof typeof TYPE_MAP, request?: Request): Promise<Response> {
   try {
     const cacheKey = type === "sources" ? "sources" : type === "rules" ? "rules" : type === "txtTocRules" ? "txtTocRules" : "dictRules";
     const cached = await env.KV.get(cacheKey);
     if (cached) {
-      return new Response(cached, {
-        headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "HIT" },
+      const output = type === "sources" && request ? await automaticallyInjectReviewRules(cached, request, env) : cached;
+      return new Response(output, {
+        headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "HIT", "Cache-Control": "no-store" },
       });
     }
 
     // 缓存 MISS：调用 rebuildCache 重建并写入 KV，再读取返回（消除重复 SQL）
     await rebuildCache(env, TYPE_MAP[type]);
     const fresh = await env.KV.get(cacheKey);
-    const jsonArray = fresh ?? "[]";
+    const raw = fresh ?? "[]";
+    const jsonArray = type === "sources" && request ? await automaticallyInjectReviewRules(raw, request, env) : raw;
 
     return new Response(jsonArray, {
-      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "MISS" },
+      headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "X-Cache": "MISS", "Cache-Control": "no-store" },
     });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { "Content-Type": "application/json" } });

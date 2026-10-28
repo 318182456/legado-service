@@ -312,6 +312,9 @@ export interface ReviewConfig {
   defaultPersonas: string[];
   version: string;
   autoFetch: boolean;
+  ruleAutoInject: boolean;
+  ruleMarkName: boolean;
+  ruleMark: string;
   readerAuth: string;
   readerUrl: string;
   effectiveReaderUrl: string;

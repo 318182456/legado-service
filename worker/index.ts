@@ -76,7 +76,7 @@ export default {
 
     try {
       // ── /subscribe/* (公开) ───────────────────────────────────────
-      if (path === "/subscribe/sources" && method === "GET") return subscribe.handleSubscribeOutput(env, "sources");
+      if (path === "/subscribe/sources" && method === "GET") return subscribe.handleSubscribeOutput(env, "sources", request);
       if (path === "/subscribe/rules" && method === "GET") return subscribe.handleSubscribeOutput(env, "rules");
       if (path === "/subscribe/txtTocRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "txtTocRules");
       if (path === "/subscribe/dictRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "dictRules");

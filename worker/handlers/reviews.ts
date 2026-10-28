@@ -10,6 +10,7 @@
  * 定位不用 bookUrl 而用「书名+作者」与「章节标题」的散列，换书源后批注依然命中。
  */
 
+import { publicOrigin, buildReviewRule, loadReviewRulePolicy, withAutomaticReviewRule, isManagedReviewRule } from "../review-rule";
 import fs from "fs-extra";
 import path from "path";
 import { Env } from "../types";
@@ -85,7 +86,7 @@ async function reviewTokenGuard(env: Env, url: URL): Promise<Response | null> {
     console.warn(
       `[段评] 令牌校验失败，请求被拒：${url.pathname}` +
         `（收到 ${provided ? `"${provided.slice(0, 4)}…"` : "空"}）。` +
-        `书源里的 URL 可能是改令牌之前注入的，重新注入一次即可`
+        `书源里的 URL 可能是改令牌之前注入的，重新同步订阅即可`
     );
     return err("Invalid review token", 401);
   }
@@ -481,7 +482,7 @@ async function alignWithFetchedContent(
   if (!opts.bookUrl || !opts.originUrl) {
     console.log(
       `[段评] 无法校正段号：缺参数 ${!opts.bookUrl ? "bookUrl" : ""}${!opts.bookUrl && !opts.originUrl ? " " : ""}${!opts.originUrl ? "origin" : ""}` +
-        `（书源里的 URL 规则需重新注入）`
+        `（请在 App 更新订阅以刷新段评规则）`
     );
     return null;
   }
@@ -709,6 +710,8 @@ export async function handleCheckSourceStatus(request: Request, env: Env, url: U
   ).first()) as any;
   const token = String(tokenRow?.value ?? "").trim();
   const origin = publicOrigin(request);
+  const policy = await loadReviewRulePolicy(env);
+  const automaticRule = buildReviewRule(origin, policy.token);
 
   const matches = [];
   for (const row of (rows.results ?? []) as any[]) {
@@ -720,6 +723,7 @@ export async function handleCheckSourceStatus(request: Request, env: Env, url: U
       continue;
     }
 
+    src = withAutomaticReviewRule(src, automaticRule, policy);
     const isJs = !!String(src.mainJs ?? "").trim();
     const rr = src.ruleReview ?? null;
 
@@ -1674,75 +1678,11 @@ async function serveTemplate(request: Request, env: Env, fileName: string): Prom
 
 // ─── 批量注入规则书源 ─────────────────────────────────────────────
 
-/** 注入的 URL 都带这个路径，撤销时靠它认出哪些是我们写进去的 */
-const INJECT_MARK = "/review/summary";
-
-/**
- * 还原对外可访问的地址。
- *
- * 反代通常以明文 HTTP 转发到容器，直接取 new URL(request.url).origin 会得到
- * http://域名:8443 这种协议错配的地址。写进书源后 nginx 回一个
- * 「400 The plain HTTP request was sent to HTTPS port」HTML 页，
- * App 按 JSON 规则解析得到 0 条 —— 请求成功、结果为空、不报错，极难排查。
- * 因此优先采信反代头。
- */
-function publicOrigin(request: Request): string {
-  const url = new URL(request.url);
-
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const host = forwardedHost || request.headers.get("host") || url.host;
-
-  let proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  if (!proto) {
-    // Forwarded: proto=https;host=...
-    const fwd = request.headers.get("forwarded");
-    proto = fwd?.match(/proto=([^;,\s]+)/i)?.[1];
-  }
-  if (!proto && request.headers.get("x-forwarded-ssl") === "on") proto = "https";
-  if (!proto) proto = url.protocol.replace(":", "");
-
-  return `${proto}://${host}`;
-}
-
 /** 认得出并剥掉我们加过的名称前缀，避免反复注入把标记叠成一串 */
 const MARK_PATTERN = /^(?:[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]+|\[评\]|\[段评\])+\s*/u;
 
 function stripMark(name: string): string {
   return name.replace(MARK_PATTERN, "").trim();
-}
-
-function buildReviewRule(origin: string, token: string) {
-  const t = token ? `&token=${encodeURIComponent(token)}` : "";
-  return {
-    enabled: true,
-    // AnalyzeUrl.evalJS 的作用域里只有 book/page/java/source，没有 chapter，
-    // 章节标题必须走 java.get("title")，写 chapter.title 会直接抛异常。
-    // bookUrl 与 origin 供服务端借 reader 反查正文，从而自动生成 AI 段评。
-    reviewSummaryUrl:
-      `${origin}/review/summary?book={{encodeURIComponent(book.name)}}` +
-      `&author={{encodeURIComponent(book.author)}}` +
-      `&chapter={{encodeURIComponent(java.get("title"))}}` +
-      `&bookUrl={{encodeURIComponent(book.bookUrl)}}` +
-      `&origin={{encodeURIComponent(book.origin)}}` +
-      // baseUrl 即 chapter.url，服务端据此直接抓源站取正文，
-      // 与 App 走同一条解析路径，段号才对得上
-      `&chapterUrl={{encodeURIComponent(baseUrl)}}${t}`,
-    summaryListRule: "$.list",
-    summaryParagraphIndexRule: "$.paraIndex",
-    summaryCountRule: "$.count",
-    summaryParagraphDataRule: "$.paraData",
-    reviewDetailUrl: `${origin}/review/detail?para={{paraIndex}}&data={{paraData}}&page={{page}}${t}`,
-    detailListRule: "$.items",
-    detailIdRule: "$.id",
-    detailNameRule: "$.name",
-    detailBadgeRule: "$.badge",
-    detailContentRule: "$.content",
-    reviewQuoteUrl: `${origin}/review/replies?id={{reviewId}}&page={{page}}${t}`,
-    replyListRule: "$.items",
-    replyIdRule: "$.id",
-    replyNameRule: "$.name",
-    replyContentRule: "$.content",
-  };
 }
 
 /**
@@ -1765,6 +1705,10 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
   // 想在那里一眼认出带段评的源，只能在名字上加前缀
   const markName = body?.markName === true;
   const mark = String(body?.mark ?? "💬").trim() || "💬";
+
+  if (revoke && !subscriptionId) {
+    await env.DB.prepare("INSERT INTO system_config (key, value) VALUES ('review_auto_inject', '0') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  }
 
   const origin = publicOrigin(request);
   const tokenRow = (await env.DB.prepare(
@@ -1812,7 +1756,7 @@ export async function handleInjectReviewRule(request: Request, env: Env): Promis
     }
 
     const current = source.ruleReview as Record<string, unknown> | undefined;
-    const isOurs = String(current?.reviewSummaryUrl ?? "").includes(INJECT_MARK);
+    const isOurs = isManagedReviewRule(current);
 
     const oldName = String(source.bookSourceName ?? "");
     const newName = applyMark(oldName);
@@ -1968,7 +1912,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
         ? `${selfOrigin} 可达且返回 JSON`
         : `${selfOrigin} 返回 HTTP ${res.status} ${type}——书源拿不到 JSON。` +
           (res.status === 400 && !isJson
-            ? "多半是协议错配（把 http 请求发给了 HTTPS 端口），重新注入一次即可写入正确协议"
+            ? "多半是协议错配（把 http 请求发给了 HTTPS 端口），重新同步订阅即可写入正确协议"
             : "请检查反代配置")
     );
   } catch (e) {
@@ -2142,6 +2086,7 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
 /** 返回段评相关配置，供管理界面展示 */
 export async function handleGetReviewConfig(env: Env): Promise<Response> {
   const cfg = await loadAiConfig(env);
+  const rulePolicy = await loadReviewRulePolicy(env);
 
   // 把容器实际跑的版本回给界面：段评功能迭代快，
   // 「改了没生效」十次有九次是镜像还没换
@@ -2182,6 +2127,9 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     defaultPersonas: DEFAULT_PERSONAS,
     version,
     autoFetch: !!readerCfg,
+    ruleAutoInject: rulePolicy.enabled,
+    ruleMarkName: rulePolicy.markName,
+    ruleMark: rulePolicy.mark,
     readerAuth: readerCfg?.accessToken
       ? (readerCfg.username ? `已登录（${readerCfg.username}）` : "使用固定 accessToken")
       : "未认证",
