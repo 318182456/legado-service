@@ -173,3 +173,21 @@ setInterval(async () => {
     scheduledRunning = false;
   }
 }, CRON_INTERVAL);
+
+
+// Durable retry metadata lives in the DB; this small sweep survives process restarts.
+let reviewRetryRunning = false;
+const sweepReviewRetries = async () => {
+  if (reviewRetryRunning) return;
+  reviewRetryRunning = true;
+  try {
+    const { ensureDatabase } = await import('./worker/utils');
+    const { retryFailedReviewChapters } = await import('./worker/handlers/reviews');
+    await ensureDatabase(env);
+    await retryFailedReviewChapters(env);
+  } catch (error) {
+    console.error('[段评重试] 后台扫描失败:', (error as Error).message);
+  } finally { reviewRetryRunning = false; }
+};
+setInterval(sweepReviewRetries, 60_000);
+setTimeout(sweepReviewRetries, 10_000);

@@ -45,6 +45,12 @@ export default function ReviewsView() {
   const [personas, setPersonas] = useState('');
   const [reviewToken, setReviewToken] = useState('');
   const [autoFetch, setAutoFetch] = useState(true);
+  const [autoRetry, setAutoRetry] = useState(true);
+  const [showFailures, setShowFailures] = useState(false);
+  const [failures, setFailures] = useState<api.ReviewFailure[]>([]);
+  const [failureMessage, setFailureMessage] = useState('');
+  const [failureRefresh, setFailureRefresh] = useState(0);
+  const [retrySubmitting, setRetrySubmitting] = useState(false);
   const [readerUrl, setReaderUrl] = useState('');
   const [readerToken, setReaderToken] = useState('');
   const [readerUser, setReaderUser] = useState('');
@@ -93,6 +99,7 @@ export default function ReviewsView() {
       setRetainDays(String(cfg.retainDays));
       setPersonas(cfg.personas.join('\n'));
       setAutoFetch(cfg.autoFetch);
+      setAutoRetry(cfg.autoRetry ?? true);
       setRuleAutoInject(cfg.ruleAutoInject ?? true);
       setMarkName(cfg.ruleMarkName ?? true);
       setMark(cfg.ruleMark ?? '💬');
@@ -116,6 +123,49 @@ export default function ReviewsView() {
     window.addEventListener('refresh-data', handler);
     return () => window.removeEventListener('refresh-data', handler);
   }, []);
+
+  useEffect(() => {
+    if (!showFailures) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const result = await api.getReviewFailures(activeBook?.book_key || '', controller.signal);
+        if (disposed) return;
+        setFailures(result.failures);
+        setBooks(previous => previous.map(book => ({ ...book, failed_count: result.byBook[book.book_key] || 0 })));
+        setConfig(previous => previous ? { ...previous, stats: { ...previous.stats, failedCount: result.total } } : previous);
+      } catch (error) {
+        if (!disposed) setFailureMessage('失败记录加载失败，请稍后刷新');
+      } finally {
+        if (!disposed) timer = setTimeout(refresh, 5000);
+      }
+    };
+    refresh();
+    return () => { disposed = true; controller.abort(); clearTimeout(timer); };
+  }, [showFailures, activeBook?.book_key, failureRefresh]);
+
+  const handleRetryFailures = async (chapter?: api.ReviewFailure) => {
+    setRetrySubmitting(true);
+    try {
+      const result = await api.retryReviewFailures(chapter
+        ? { bookKey: chapter.book_key, chapterKey: chapter.chapter_key }
+        : activeBook ? { bookKey: activeBook.book_key } : { all: true });
+      setFailureMessage(`已排队 ${result.queued} 章，每批最多 ${result.batchLimit} 章。` +
+        (result.waitingForContent ? `${result.waitingForContent} 章缺少正文，请在 App 重新进入对应章节后重试。` : '') +
+        '成功后会自动移除失败记录。');
+      setFailureRefresh(value => value + 1);
+    } catch (error) { setFailureMessage('重试未启动：' + String(error)); }
+    finally { setRetrySubmitting(false); }
+  };
+
+  const handleAutoRetry = async (enabled: boolean) => {
+    const previous = autoRetry;
+    setAutoRetry(enabled);
+    try { await api.saveSystemConfig({ review_auto_retry: enabled ? '1' : '0' }); }
+    catch (error) { setAutoRetry(previous); setFailureMessage('自动重试设置保存失败'); }
+  };
 
   const openBook = async (book: api.ReviewBook) => {
     setActiveBook(book);
@@ -175,6 +225,7 @@ export default function ReviewsView() {
         review_retain_days: retainDays,
         review_personas: personas,
         review_auto_fetch: autoFetch ? '1' : '0',
+        review_auto_retry: autoRetry ? '1' : '0',
         reader_url: readerUrl.trim().replace(/\/+$/, ''),
       };
       // 留空表示不改动已保存的 Key
@@ -428,6 +479,38 @@ export default function ReviewsView() {
           warn={(stats?.failedCount ?? 0) > 0}
         />
       </div>
+
+      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+        <button onClick={() => setShowFailures(value => !value)} className="w-full px-5 py-3 text-left font-semibold text-sm">
+          失败记录与重试（{stats?.failedCount ?? 0}）{showFailures ? ' · 收起' : ' · 展开'}
+        </button>
+        {showFailures && <div className="px-5 pb-4 space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={autoRetry} onChange={event => handleAutoRetry(event.target.checked)} />
+            自动重试临时失败（最多 3 次，间隔约 1、5、15 分钟）
+          </label>
+          <p className="text-xs text-secondary">每批最多 10 章，串行处理。鉴权和配置错误需修复后手动重试；成功后清除失败原因，保留成功段评及人工批注。</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => handleRetryFailures()} disabled={retrySubmitting} className="px-3 py-2 text-sm rounded-lg bg-primary text-on-primary disabled:opacity-50">
+              {retrySubmitting ? '排队中...' : activeBook ? '重试本书失败章节' : '重试失败章节（每批 10 章）'}
+            </button>
+            {activeBook && <button onClick={() => setActiveBook(null)} className="text-sm text-secondary">查看全部失败</button>}
+            <button onClick={() => setFailureRefresh(value => value + 1)} className="text-sm text-secondary">刷新失败记录</button>
+          </div>
+          {failureMessage && <p role="status" className="text-sm text-secondary">{failureMessage}</p>}
+          {failures.length === 0 ? <p className="text-sm text-secondary">暂无失败记录。</p> : <div className="divide-y divide-outline-variant">
+            {failures.map(failure => <div key={failure.id} className="py-3 flex justify-between items-start gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">《{failure.book_name}》 · {failure.chapter_title}</p>
+                <p className="text-xs text-error break-words mt-1">{failure.error || '生成失败'}</p>
+                <p className="text-xs text-secondary mt-1">{failure.status === 'generating' ? '排队或重试中' : failure.status === 'pending' ? '等待 App 提供正文' :
+                  failure.auto_retryable && failure.retry_after && autoRetry ? `下次重试：${new Date(failure.retry_after).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : '等待手动重试'} · 已重试 {failure.retry_count} 次</p>
+              </div>
+              <button onClick={() => handleRetryFailures(failure)} disabled={retrySubmitting || failure.status !== 'failed'} className="shrink-0 text-sm text-primary disabled:opacity-40">重试此章</button>
+            </div>)}
+          </div>}
+        </div>}
+      </section>
 
       {showConfig && (
         <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">

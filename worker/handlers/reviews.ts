@@ -11,6 +11,7 @@
  */
 
 import { publicOrigin, buildReviewRule, loadReviewRulePolicy, withAutomaticReviewRule, isManagedReviewRule } from "../review-rule";
+import { autoReviewRetryEnabled, claimReviewRetries, executeReviewRetries, failReviewAttempt, retryParagraphs, type RetryChapter } from "../review-retry";
 import fs from "fs-extra";
 import path from "path";
 import { Env } from "../types";
@@ -831,7 +832,7 @@ async function autoGenerateViaReader(
     if (row?.status && row.status !== "pending") {
       console.log(
         `[段评] ${tag} 跳过抓取：章节状态为 ${row.status}` +
-          (row.status === "failed" ? "（此前失败过，清空本书 AI 段评可重试）" : "")
+          (row.status === "failed" ? "（此前失败过，可在管理页重试失败章节）" : "")
       );
       return;
     }
@@ -883,6 +884,7 @@ async function autoGenerateViaReader(
       `自动抓取正文失败 [${opts.bookName} - ${opts.chapterTitle}]:`,
       (e as Error).message
     );
+    await failReviewAttempt(env, opts.bookKey, opts.chapterKey, e);
   }
 }
 
@@ -1060,6 +1062,7 @@ interface GenerateTask {
   chapterTitle: string;
   paragraphs: string[];
   force?: boolean;
+  attemptId?: string;
 }
 
 /**
@@ -1069,10 +1072,18 @@ interface GenerateTask {
 async function generateIfNeeded(env: Env, task: GenerateTask): Promise<void> {
   const cfg = await loadAiConfig(env);
   // 没配 key 不算错误：人工批注仍可正常使用
-  if (!cfg.apiKey) return;
+  if (!cfg.apiKey) {
+    if (task.attemptId) await failReviewAttempt(env, task.bookKey, task.chapterKey, new Error("未配置模型 API Key"), task.attemptId);
+    return;
+  }
 
-  const claimed = await claimChapter(env, task);
-  if (!claimed) return;
+  if (task.attemptId) {
+    const owned = await env.DB.prepare("SELECT id FROM review_chapters WHERE book_key=? AND chapter_key=? AND status='generating' AND attempt_id=?").bind(task.bookKey, task.chapterKey, task.attemptId).first();
+    if (!owned) return;
+  } else {
+    const claimed = await claimChapter(env, task);
+    if (!claimed) return;
+  }
 
   try {
     const generator = createGenerator(cfg);
@@ -1090,24 +1101,23 @@ async function generateIfNeeded(env: Env, task: GenerateTask): Promise<void> {
       GENERATE_TIMEOUT_MS
     );
 
+    const stillOwned = await env.DB.prepare("SELECT id FROM review_chapters WHERE book_key=? AND chapter_key=? AND status='generating' AND attempt_id=?").bind(task.bookKey, task.chapterKey, task.attemptId).first();
+    if (!stillOwned) return;
     await persistDrafts(env, task, drafts);
     console.log(
       `[段评] 《${task.bookName}》- ${task.chapterTitle} 生成完成，入库 ${drafts.length} 条主评论`
     );
     await env.DB.prepare(
       `UPDATE review_chapters SET status = 'done', error = NULL, generated_at = datetime('now'),
-              para_count = ? WHERE book_key = ? AND chapter_key = ?`
+              para_count = ?, retry_count=0, auto_retryable=1, retry_after=NULL, retry_payload=NULL, retry_claimed_at=NULL, attempt_id=NULL
+              WHERE book_key = ? AND chapter_key = ? AND attempt_id=?`
     )
-      .bind(task.paragraphs.length, task.bookKey, task.chapterKey)
+      .bind(task.paragraphs.length, task.bookKey, task.chapterKey, task.attemptId)
       .run();
   } catch (e) {
     const message = (e as Error).message?.slice(0, 500) ?? "生成失败";
     console.error(`段评生成失败 [${task.bookName} - ${task.chapterTitle}]:`, message);
-    await env.DB.prepare(
-      `UPDATE review_chapters SET status = 'failed', error = ? WHERE book_key = ? AND chapter_key = ?`
-    )
-      .bind(message, task.bookKey, task.chapterKey)
-      .run();
+    await failReviewAttempt(env, task.bookKey, task.chapterKey, message, task.attemptId, task.paragraphs);
   }
 }
 
@@ -1137,12 +1147,14 @@ async function claimChapter(env: Env, task: GenerateTask): Promise<boolean> {
   const status = row?.status ?? "pending";
   if (!task.force && status !== "pending") return false;
 
+  task.attemptId = crypto.randomUUID();
+  const payload = JSON.stringify(task.paragraphs);
   const res = await env.DB.prepare(
-    `UPDATE review_chapters SET status = 'generating', chapter_title = ?, book_name = ?, author = ?
-      WHERE book_key = ? AND chapter_key = ? AND status != 'generating'`
-  )
-    .bind(task.chapterTitle, task.bookName, task.author, task.bookKey, task.chapterKey)
-    .run();
+    `UPDATE review_chapters SET status = 'generating', chapter_title = ?, book_name = ?, author = ?,
+       attempt_id=?, retry_claimed_at=?, retry_payload=?
+      WHERE book_key = ? AND chapter_key = ? AND ${task.force ? "status != 'generating'" : "status = 'pending'"}`
+  ).bind(task.chapterTitle, task.bookName, task.author, task.attemptId, new Date().toISOString(),
+    payload.length <= 2_000_000 ? payload : null, task.bookKey, task.chapterKey).run();
 
   return (res?.meta?.changes ?? 1) > 0;
 }
@@ -1207,12 +1219,10 @@ async function persistDrafts(env: Env, task: GenerateTask, drafts: ReviewDraft[]
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`生成超时（${ms / 1000}s）`)), ms)
-    ),
-  ]);
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`生成超时（${ms / 1000}s）`)), ms);
+    promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
 }
 
 // ─── 公开：段评详情 ───────────────────────────────────────────────
@@ -1386,7 +1396,7 @@ export async function handleListReviewBooks(env: Env, url: URL): Promise<Respons
     env.DB.prepare(
       `SELECT book_key, MAX(book_name) AS book_name, MAX(author) AS author,
               COUNT(*) AS chapter_count,
-              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+              SUM(CASE WHEN status = 'failed' OR error IS NOT NULL THEN 1 ELSE 0 END) AS failed_count
          FROM review_chapters GROUP BY book_key ORDER BY MAX(id) DESC LIMIT ? OFFSET ?`
     )
       .bind(limit, offset)
@@ -2038,47 +2048,19 @@ export async function handleDiagnoseReview(request: Request, env: Env): Promise<
     return ok({ steps, canGenerate: true });
   }
 
-  try {
-    const drafts = await createGenerator(aiCfg).generate({
-      bookName,
-      author,
-      chapterTitle,
-      paragraphs,
-      density: aiCfg.density,
-      personas: aiCfg.personas,
-      hotspots: aiCfg.hotspots,
-      replyDepth: aiCfg.replyDepth,
-    });
-    push("调用模型", drafts.length > 0 ? "ok" : "fail", `返回 ${drafts.length} 条有效评论`);
-
-    if (drafts.length) {
-      await env.DB.prepare(
-        `INSERT INTO review_chapters (book_key, chapter_key, book_name, author, chapter_title, para_count, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'generating')
-         ON CONFLICT(book_key, chapter_key) DO UPDATE SET status = 'generating'`
-      )
-        .bind(bookKey, chapterKey, bookName, author, chapterTitle, paragraphs.length)
-        .run();
-
-      await persistDrafts(
-        env,
-        { bookKey, chapterKey, bookName, author, chapterTitle, paragraphs, force: true },
-        drafts
-      );
-      await env.DB.prepare(
-        `UPDATE review_chapters SET status = 'done', error = NULL, generated_at = datetime('now')
-          WHERE book_key = ? AND chapter_key = ?`
-      )
-        .bind(bookKey, chapterKey)
-        .run();
-
-      const after = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
-      push("写入数据库", "ok", `现有 ${after.length} 个段落带评论，回 App 重进本章即可看到图标`);
-    }
-  } catch (e) {
-    push("调用模型", "fail", (e as Error).message);
+  await rememberChapterLocation(env, { bookKey, chapterKey, bookName, author, chapterTitle, bookUrl, originUrl });
+  await generateIfNeeded(env, { bookKey, chapterKey, bookName, author, chapterTitle, paragraphs, force: true });
+  const outcome = await env.DB.prepare("SELECT status, error FROM review_chapters WHERE book_key=? AND chapter_key=?").bind(bookKey, chapterKey).first() as any;
+  if (outcome?.status === 'failed') {
+    push("调用模型", "fail", outcome.error || "生成失败");
     return ok({ steps, canGenerate: false });
   }
+  if (outcome?.status === 'generating') {
+    push("调用模型", "skip", "本章正在生成或重试，请稍后查看");
+    return ok({ steps, canGenerate: false });
+  }
+  const after = await summarize(env, bookKey, chapterKey, packParaData(bookKey, chapterKey));
+  push("写入数据库", "ok", `现有 ${after.length} 个段落带评论，失败状态已清除`);
 
   return ok({ steps, canGenerate: true });
 }
@@ -2110,7 +2092,7 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
        (SELECT COUNT(*) FROM reviews WHERE origin = 'ai')    AS ai_count,
        (SELECT COUNT(*) FROM reviews WHERE origin = 'human') AS human_count,
        (SELECT COUNT(*) FROM review_chapters)                AS chapter_count,
-       (SELECT COUNT(*) FROM review_chapters WHERE status = 'failed') AS failed_count`
+       (SELECT COUNT(*) FROM review_chapters WHERE status = 'failed' OR error IS NOT NULL) AS failed_count`
   ).first()) as any;
 
   return ok({
@@ -2127,6 +2109,7 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
     defaultPersonas: DEFAULT_PERSONAS,
     version,
     autoFetch: !!readerCfg,
+    autoRetry: await autoReviewRetryEnabled(env),
     ruleAutoInject: rulePolicy.enabled,
     ruleMarkName: rulePolicy.markName,
     ruleMark: rulePolicy.mark,
@@ -2142,4 +2125,46 @@ export async function handleGetReviewConfig(env: Env): Promise<Response> {
       failedCount: Number(stats?.failed_count ?? 0),
     },
   });
+}
+
+
+async function retryChapter(env: Env, row: RetryChapter): Promise<void> {
+  let paragraphs = retryParagraphs(row);
+  if (!paragraphs.length) {
+    const reader = await resolveReaderConfig(env);
+    if (!reader) throw new Error("未配置 reader 或已关闭自动抓正文，请先修复配置");
+    const fetched = await withReaderRetry(env, reader, token => fetchParagraphsViaReader(env, {
+      readerUrl: reader.readerUrl, accessToken: token, bookUrl: row.book_url!, originUrl: row.origin_url!, chapterTitle: row.chapter_title,
+    }));
+    paragraphs = fetched.paragraphs;
+  }
+  if (!paragraphs.length) throw new Error("正文为空，请在 App 重新打开章节");
+  await generateIfNeeded(env, { bookKey: row.book_key, chapterKey: row.chapter_key, bookName: row.book_name,
+    author: row.author, chapterTitle: row.chapter_title, paragraphs, force: true, attemptId: row.attempt_id });
+}
+
+export async function retryFailedReviewChapters(env: Env): Promise<void> {
+  if (!await autoReviewRetryEnabled(env) || !(await loadAiConfig(env)).apiKey) return;
+  const { claims } = await claimReviewRetries(env);
+  await executeReviewRetries(env, claims, row => retryChapter(env, row));
+}
+
+export async function handleListReviewFailures(env: Env, url: URL): Promise<Response> {
+  const book = url.searchParams.get('bookKey') || '';
+  const where = `(status='failed' OR error IS NOT NULL)${book ? ' AND book_key=?' : ''}`;
+  const rows = await env.DB.prepare(`SELECT id, book_key, chapter_key, book_name, author, chapter_title,
+    status, error, retry_count, retry_after, auto_retryable FROM review_chapters WHERE ${where} ORDER BY id DESC LIMIT 100`).bind(...(book ? [book] : [])).all();
+  const counts = await env.DB.prepare("SELECT book_key, COUNT(*) AS count FROM review_chapters WHERE status='failed' OR error IS NOT NULL GROUP BY book_key").all();
+  const byBook: Record<string, number> = Object.fromEntries((counts.results as any[]).map(row => [row.book_key, Number(row.count)]));
+  return ok({ failures: rows.results, byBook, total: Object.values(byBook).reduce((sum, count) => sum + count, 0) });
+}
+
+export async function handleRetryReviewFailures(request: Request, env: Env, ctx: any): Promise<Response> {
+  const body = await parseBody<{ bookKey?: string; chapterKey?: string; all?: boolean }>(request);
+  if (!body?.bookKey && body?.all !== true) return err("请选择书籍或明确重试全部失败章节");
+  if (!(await loadAiConfig(env)).apiKey) return err("请先配置模型 API Key，再重试失败章节");
+  const result = await claimReviewRetries(env, { manual: true, bookKey: body?.bookKey, chapterKey: body?.chapterKey });
+  const work = executeReviewRetries(env, result.claims, row => retryChapter(env, row));
+  if (ctx?.waitUntil) ctx.waitUntil(work); else await work;
+  return ok({ queued: result.claims.length, waitingForContent: result.waitingForContent, batchLimit: 10 });
 }

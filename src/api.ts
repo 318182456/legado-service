@@ -312,6 +312,7 @@ export interface ReviewConfig {
   defaultPersonas: string[];
   version: string;
   autoFetch: boolean;
+  autoRetry: boolean;
   ruleAutoInject: boolean;
   ruleMarkName: boolean;
   ruleMark: string;
@@ -436,3 +437,12 @@ export const clearAiReviews = (bookKey: string, chapterKey?: string) =>
 
 
 
+
+export interface ReviewFailure {
+  id: number; book_key: string; chapter_key: string; book_name: string; author: string;
+  chapter_title: string; status: string; error: string; retry_count: number; retry_after: string | null; auto_retryable: number;
+}
+export const getReviewFailures = (bookKey = '', signal?: AbortSignal) =>
+  apiFetch<{ failures: ReviewFailure[]; total: number; byBook: Record<string, number> }>(`/api/reviews/failures?bookKey=${encodeURIComponent(bookKey)}`, { signal });
+export const retryReviewFailures = (opts: { bookKey?: string; chapterKey?: string; all?: boolean }) =>
+  apiFetch<{ queued: number; waitingForContent: number; batchLimit: number }>('/api/reviews/retry', { method: 'POST', body: JSON.stringify(opts) });

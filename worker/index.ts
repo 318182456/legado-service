@@ -217,6 +217,8 @@ export default {
         if (method === "GET") return reviews.handleListReviews(env, url);
         if (method === "POST") return reviews.handleAddReview(request, env);
       }
+      if (path === "/api/reviews/failures" && method === "GET") return reviews.handleListReviewFailures(env, url);
+      if (path === "/api/reviews/retry" && method === "POST") return reviews.handleRetryReviewFailures(request, env, ctx);
       if (path === "/api/reviews/books" && method === "GET") return reviews.handleListReviewBooks(env, url);
       if (path === "/api/reviews/config" && method === "GET") return reviews.handleGetReviewConfig(env);
       if (path === "/api/reviews/mixin" && method === "GET") return reviews.handleReviewMixinScript(request, env);
@@ -296,5 +298,6 @@ export default {
 
   async scheduled(event: any, env: Env, ctx: any) {
     ctx.waitUntil(handleScheduled(env));
+    ctx.waitUntil(reviews.retryFailedReviewChapters(env));
   },
 };

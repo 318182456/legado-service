@@ -130,6 +130,14 @@ export const SCHEMA_STATEMENTS = [
     para_count    INTEGER NOT NULL DEFAULT 0,
     status        TEXT    NOT NULL DEFAULT 'pending',
     error         TEXT    DEFAULT NULL,
+    book_url      TEXT    DEFAULT NULL,
+    origin_url    TEXT    DEFAULT NULL,
+    retry_count   INTEGER NOT NULL DEFAULT 0,
+    auto_retryable INTEGER NOT NULL DEFAULT 1,
+    retry_after   TEXT    DEFAULT NULL,
+    retry_payload TEXT    DEFAULT NULL,
+    retry_claimed_at TEXT DEFAULT NULL,
+    attempt_id    TEXT    DEFAULT NULL,
     generated_at  TEXT    DEFAULT NULL,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
   )`,
@@ -139,6 +147,13 @@ export const SCHEMA_STATEMENTS = [
     // 记下 App 请求时带来的定位信息，诊断和补生成就不必再手工输入
     `ALTER TABLE review_chapters ADD COLUMN book_url TEXT DEFAULT NULL`,
     `ALTER TABLE review_chapters ADD COLUMN origin_url TEXT DEFAULT NULL`,
+    `ALTER TABLE review_chapters ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE review_chapters ADD COLUMN auto_retryable INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE review_chapters ADD COLUMN retry_after TEXT DEFAULT NULL`,
+    `ALTER TABLE review_chapters ADD COLUMN retry_payload TEXT DEFAULT NULL`,
+    `ALTER TABLE review_chapters ADD COLUMN retry_claimed_at TEXT DEFAULT NULL`,
+    `ALTER TABLE review_chapters ADD COLUMN attempt_id TEXT DEFAULT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_review_retry_due ON review_chapters(status, retry_after)`,
     // para_index 为 -1 时表示章节标题；para_hash 用于校验段落是否被净化规则改动
     `CREATE TABLE IF NOT EXISTS reviews (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
