@@ -52,11 +52,19 @@ export async function generateJson(
   const data = await res.json() as any;
   const candidate = gemini ? data?.candidates?.[0] : data?.choices?.[0];
   const reason = gemini ? candidate?.finishReason : candidate?.finish_reason;
+  if (candidate?.message?.refusal || ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST'].includes(reason) || data?.promptFeedback?.blockReason) {
+    throw new Error("模型安全策略拒绝本章内容，请检查模型内容政策");
+  }
   if (reason === "MAX_TOKENS" || reason === "length") throw new Error("模型输出被截断，请减少生成数量或提高模型输出上限");
   const content = gemini
     ? candidate?.content?.parts?.filter((p: any) => !p.thought).map((p: any) => p.text ?? "").join("")
     : candidate?.message?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("模型未返回有效内容，请重试或检查模型配置");
+  // Some compatibility gateways wrap provider policy refusals as successful text completions.
+  // Classify them before JSON parsing; do not rewrite the content or bypass provider policy.
+  if (/The prompt could not be submitted[\s\S]*Generative AI Prohibited Use policy/i.test(content)) {
+    throw new Error("模型安全策略拒绝本章内容，请检查模型内容政策");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\s*```$/i, "$1"));

@@ -133,3 +133,17 @@ test("主题调整带入当前排版，缺少配色不再用默认值冒充生�
   });
   await assert.rejects(suggestTheme(env, { ...input, current: { textSize: 28, lineSpacingExtra: 16 } }), /未返回完整配色/);
 });
+
+test("模型安全拒绝不会误报 JSON 错误", async t => {
+  for (const response of [
+    {choices:[{message:{content:"The prompt could not be submitted. Violates Google's Generative AI Prohibited Use policy."},finish_reason:"stop"}]},
+    {choices:[{message:{content:null,refusal:"policy rejection"},finish_reason:"stop"}]},
+    {candidates:[{finishReason:"SAFETY"}]},
+    {promptFeedback:{blockReason:"SAFETY"}},
+  ]) {
+    const mock=t.mock.method(globalThis,"fetch",async()=>Response.json(response));
+    const gemini=!!response.candidates||!!response.promptFeedback;
+    await assert.rejects(generateJson({...cfg,provider:gemini?"gemini":"openai-compatible"},"test",{properties:{}},0.6),/安全策略拒绝/);
+    mock.mock.restore();
+  }
+});

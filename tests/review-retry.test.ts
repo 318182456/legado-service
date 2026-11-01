@@ -185,3 +185,5 @@ test('同章普通请求并发时也只生成一次', async t => {
   assert.equal(calls, 1);
   assert.equal(f.db.prepare('SELECT status FROM review_chapters').get()!.status, 'done');
 });
+
+test('provider policy rejection is not automatically retried', () => { assert.equal(isRetryableReviewError('模型安全策略拒绝本章内容，请检查模型内容政策'), false); });

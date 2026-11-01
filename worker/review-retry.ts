@@ -8,7 +8,7 @@ export interface RetryChapter {
   retry_count: number; attempt_id: string; error?: string;
 }
 export const isRetryableReviewError = (error: string): boolean =>
-  !/HTTP (400|401|403|404)|API.?Key|鉴权|认证|未配置|找不到书源|目录.*找不到|未找到.*章|输出被截断|未知的模型接口/i.test(error);
+  !/HTTP (400|401|403|404)|API.?Key|鉴权|认证|未配置|找不到书源|目录.*找不到|未找到.*章|输出被截断|未知的模型接口|安全策略拒绝|内容政策/i.test(error);
 
 export async function autoReviewRetryEnabled(env: Env): Promise<boolean> {
   const row = await env.DB.prepare("SELECT value FROM system_config WHERE key = 'review_auto_retry'").first() as any;
