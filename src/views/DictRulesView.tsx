@@ -67,7 +67,7 @@ export default function DictRulesView({ onAdd, onEdit }: DictRulesViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">字典规则</h2>
           <p className="text-sm text-secondary mt-1">管理支持阅读器内置字典划词查询和展示的字典服务规则。</p>

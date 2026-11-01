@@ -67,7 +67,7 @@ export default function RulesView({ onAdd, onEdit }: RulesViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">净化规则</h2>
           <p className="text-sm text-secondary mt-1">管理自动替换、去除广告或修正内容的净化规则。</p>

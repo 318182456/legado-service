@@ -1,25 +1,26 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  LayoutDashboard, 
-  ListRestart, 
-  Settings, 
-  ChevronRight, 
-  Menu, 
-  LogOut, 
-  Sparkles, 
-  ShieldCheck, 
+import {
+  LayoutDashboard,
+  ListRestart,
+  Settings,
+  ChevronRight,
+  X,
+  ArrowUpRight,
+  Menu,
+  LogOut,
+  Sparkles,
+  ShieldCheck,
   Package,
   BookOpen,
   List,
   Compass,
   MessageSquare
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import * as api from './api';
 
 // Components
 import { NavItem } from './components/NavItem';
-import { IconButton } from './components/IconButton';
 
 // Modals
 import { AddSubscriptionModal } from './components/modals/AddSubscriptionModal';
@@ -38,15 +39,60 @@ import RulesView from './views/RulesView';
 import TxtTocRulesView from './views/TxtTocRulesView';
 import DictRulesView from './views/DictRulesView';
 import ReviewsView from './views/ReviewsView';
-import bgAssetsView from './views/AssetsView';
 import SettingsView from './views/SettingsView';
 
-// Wait, let's keep AssetsView imported as AssetsView, let's fix that
 import AssetsView from './views/AssetsView';
+
+const navigation = [
+  { id: 'dashboard', label: '控制台', icon: LayoutDashboard, group: '工作空间' },
+  { id: 'subscriptions', label: '订阅管理', icon: ListRestart, group: '工作空间' },
+  { id: 'sources', label: '书源管理', icon: ShieldCheck, group: '工作空间' },
+  { id: 'rules', label: '替换净化', icon: Sparkles, group: '阅读工具' },
+  { id: 'txt-toc-rules', label: '目录规则', icon: List, group: '阅读工具' },
+  { id: 'dict-rules', label: '字典规则', icon: Compass, group: '阅读工具' },
+  { id: 'reviews', label: '段评', icon: MessageSquare, group: '阅读工具' },
+  { id: 'assets', label: '资源管理', icon: Package, group: '管理' },
+  { id: 'settings', label: '系统设置', icon: Settings, group: '管理' },
+];
 
 export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const sidebarRef = React.useRef<HTMLElement>(null);
+  const reduceMotion = useReducedMotion();
+  const currentPage = navigation.find(item => item.id === activeTab) ?? navigation[0];
+  const navigate = (tab: string) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    sidebarRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileNavOpen(false);
+      if (event.key !== 'Tab') return;
+      const buttons = (Array.from(sidebarRef.current?.querySelectorAll('button:not([disabled])') || []) as HTMLButtonElement[])
+        .filter(button => button.getClientRects().length > 0);
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first?.focus();
+      }
+    };
+    const media = window.matchMedia('(min-width: 768px)');
+    const closeOnDesktop = () => { if (media.matches) setMobileNavOpen(false); };
+    media.addEventListener('change', closeOnDesktop);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      media.removeEventListener('change', closeOnDesktop);
+      document.removeEventListener('keydown', handleKey);
+      previousFocus?.focus();
+    };
+  }, [mobileNavOpen]);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
 
@@ -78,11 +124,12 @@ export default function App() {
     // 监听 401 认证失效事件
     const handleUnauthorized = () => {
       setIsLoggedIn(false);
+      setMobileNavOpen(false);
       setActiveTab('dashboard'); // 重置到默认页
     };
 
     window.addEventListener('unauthorized', handleUnauthorized);
-    
+
     // 获取版本信息
     api.getSystemVersion().then(setVersionInfo).catch(console.error);
 
@@ -96,7 +143,7 @@ export default function App() {
     setIsUpdating(true);
     try {
       await api.performUpdate();
-      
+
       // 开始高可用健康轮询检测重启状态
       let attempts = 0;
       const interval = setInterval(async () => {
@@ -110,7 +157,7 @@ export default function App() {
         } catch (e) {
           console.log('正在监测系统重启状态...', attempts);
         }
-        
+
         if (attempts > 30) { // 最多等待 30 秒
           clearInterval(interval);
           alert('系统重启可能需要较长时间，请稍后手动刷新页面。');
@@ -125,6 +172,7 @@ export default function App() {
 
   const handleLogout = () => {
     api.clearToken();
+    setMobileNavOpen(false);
     setIsLoggedIn(false);
   };
 
@@ -241,16 +289,16 @@ export default function App() {
 
   const renderActiveView = useMemo(() => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} />;
+      case 'dashboard': return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} onNavigate={navigate} />;
       case 'subscriptions': return (
-        <SubscriptionView 
-          onImport={() => setIsAddModalOpen(true)} 
-          onExplore={() => setIsDiscoveryModalOpen(true)} 
+        <SubscriptionView
+          onImport={() => setIsAddModalOpen(true)}
+          onExplore={() => setIsDiscoveryModalOpen(true)}
           onJsonImport={() => setIsJsonImportModalOpen(true)}
         />
       );
       case 'sources': return (
-        <SourceListView 
+        <SourceListView
           onImport={() => setIsJsonImportModalOpen(true)}
           testingIds={testingIds}
           testProgress={testProgress}
@@ -260,11 +308,11 @@ export default function App() {
         />
       );
       case 'rules': return (
-        <RulesView 
+        <RulesView
           onAdd={() => {
             setEditRuleData(null);
             setIsAddRuleModalOpen(true);
-          }} 
+          }}
           onEdit={(rule) => {
             setEditRuleData(rule);
             setIsAddRuleModalOpen(true);
@@ -272,11 +320,11 @@ export default function App() {
         />
       );
       case 'txt-toc-rules': return (
-        <TxtTocRulesView 
+        <TxtTocRulesView
           onAdd={() => {
             setEditTxtTocData(null);
             setIsAddTxtTocModalOpen(true);
-          }} 
+          }}
           onEdit={(rule) => {
             setEditTxtTocData(rule);
             setIsAddTxtTocModalOpen(true);
@@ -284,11 +332,11 @@ export default function App() {
         />
       );
       case 'dict-rules': return (
-        <DictRulesView 
+        <DictRulesView
           onAdd={() => {
             setEditDictData(null);
             setIsAddDictModalOpen(true);
-          }} 
+          }}
           onEdit={(rule) => {
             setEditDictData(rule);
             setIsAddDictModalOpen(true);
@@ -299,7 +347,7 @@ export default function App() {
       case 'reviews': return <ReviewsView />;
       case 'assets': return <AssetsView />;
       case 'settings': return <SettingsView />;
-      default: return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} />;
+      default: return <DashboardView onImport={() => setIsJsonImportModalOpen(true)} onNavigate={navigate} />;
     }
   }, [activeTab, testingIds, testProgress, isTestingAll, handleTest, handleTestAll]);
 
@@ -310,99 +358,76 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-on-background overflow-hidden font-sans antialiased">
-      {/* Sidebar */}
-      <motion.aside 
-        initial={false}
-        animate={{ width: isSidebarOpen ? 260 : 80 }}
-        className="bg-surface-container-low border-r border-outline-variant flex flex-col relative z-30 shrink-0"
+    <div className="app-shell">
+      {mobileNavOpen && <button className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航" tabIndex={-1} />}
+      <aside
+        ref={sidebarRef}
+        id="workspace-navigation"
+        aria-label="主导航"
+        role={mobileNavOpen ? 'dialog' : undefined}
+        aria-modal={mobileNavOpen || undefined}
+        className={`app-sidebar ${!isSidebarOpen ? 'is-collapsed' : ''} ${mobileNavOpen ? 'is-mobile-open' : ''}`}
       >
-        <div className="h-16 flex items-center px-6 border-b border-outline-variant/30 shrink-0">
-          <div className="flex items-center gap-3 overflow-hidden whitespace-nowrap">
-            <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 shadow-lg shadow-primary/10 border border-outline-variant/30">
-              <img src="/repo/logo.png" alt="Logo" className="w-full h-full object-cover" />
+        <div className="sidebar-brand">
+          <div className="brand-mark"><BookOpen size={22} strokeWidth={1.7} /></div>
+          <div className="sidebar-brand-copy"><strong>Legado <span>Hub</span></strong><small>你的阅读工作空间</small></div>
+          <button className="mobile-nav-close" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航"><X size={20} /></button>
+        </div>
+        <nav className="sidebar-nav" aria-label="工作空间页面">
+          {['工作空间', '阅读工具', '管理'].map(group => (
+            <div className="nav-group" key={group}>
+              <p className="nav-group-title">{group}</p>
+              {navigation.filter(item => item.group === group).map(item => (
+                <React.Fragment key={item.id}><NavItem active={activeTab === item.id} onClick={() => navigate(item.id)} icon={<item.icon size={18} strokeWidth={1.7} />} label={item.label} collapsed={!isSidebarOpen} /></React.Fragment>
+              ))}
             </div>
-            {isSidebarOpen && <span className="font-bold tracking-tight text-lg">Legado Hub</span>}
-          </div>
-        </div>
-
-        <nav className="flex-1 py-6 px-3 space-y-1.5 overflow-y-auto custom-scrollbar">
-          <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label={isSidebarOpen ? "控制台" : ""} />
-          <NavItem active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} icon={<ListRestart size={20} />} label={isSidebarOpen ? "订阅管理" : ""} />
-          <NavItem active={activeTab === 'sources'} onClick={() => setActiveTab('sources')} icon={<ShieldCheck size={20} />} label={isSidebarOpen ? "书源管理" : ""} />
-          <NavItem active={activeTab === 'rules'} onClick={() => setActiveTab('rules')} icon={<Sparkles size={20} />} label={isSidebarOpen ? "替换净化" : ""} />
-          <NavItem active={activeTab === 'txt-toc-rules'} onClick={() => setActiveTab('txt-toc-rules')} icon={<List size={20} />} label={isSidebarOpen ? "目录规则" : ""} />
-          <NavItem active={activeTab === 'dict-rules'} onClick={() => setActiveTab('dict-rules')} icon={<Compass size={20} />} label={isSidebarOpen ? "字典规则" : ""} />
-          <NavItem active={activeTab === 'reviews'} onClick={() => setActiveTab('reviews')} icon={<MessageSquare size={20} />} label={isSidebarOpen ? "段评" : ""} />
-
-          <div className="my-4 border-t border-outline-variant/30" />
-          <NavItem active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<Package size={20} />} label={isSidebarOpen ? "资源管理 (R2)" : ""} />
-          <NavItem active={false} onClick={() => window.open('/reader3/', '_blank')} icon={<BookOpen size={20} />} label={isSidebarOpen ? "在线阅读" : ""} />
-          <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label={isSidebarOpen ? "系统设置" : ""} />
+          ))}
         </nav>
-
-        <div className="p-4 border-t border-outline-variant/30 shrink-0">
-          <button 
-            onClick={handleLogout}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-bold text-error hover:bg-error-container/20 group overflow-hidden`}
-          >
-            <LogOut size={20} className="group-hover:rotate-12 transition-transform" />
-            {isSidebarOpen && <span>退出系统</span>}
-          </button>
-        </div>
-
-        <button 
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="absolute -right-3 top-20 bg-surface-container-highest border border-outline-variant text-primary rounded-full p-1 shadow-md hover:scale-110 transition-all z-40"
-        >
-          <ChevronRight size={14} className={`transition-transform duration-300 ${isSidebarOpen ? 'rotate-180' : ''}`} />
-        </button>
-      </motion.aside>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
-        <header className="h-16 border-b border-outline-variant/30 flex items-center justify-between px-8 bg-surface-container-low/30 backdrop-blur-md shrink-0 z-20">
-          <div className="flex items-center gap-4">
-            {!isSidebarOpen && (
-              <IconButton icon={<Menu size={20} />} onClick={() => setIsSidebarOpen(true)} />
-            )}
-            <h1 className="font-bold text-lg text-on-surface capitalize">{activeTab.replace('-', ' ')}</h1>
+        <div className="sidebar-bottom">
+          <a href="/reader3/" target="_blank" rel="noopener noreferrer" className="sidebar-reader" title="打开在线阅读器">
+            <BookOpen size={18} /><span className="nav-label">打开阅读器</span><ArrowUpRight size={15} className="nav-label ml-auto" />
+          </a>
+          <div className="sidebar-account">
+            <span className="account-avatar">L</span>
+            <div className="sidebar-account-copy"><strong>管理员</strong><span>Legado 工作空间</span></div>
+            <button onClick={handleLogout} className="sidebar-logout" title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
           </div>
-            <div className="flex items-center gap-4">
+        </div>
+      </aside>
+
+      <main className="app-main" inert={mobileNavOpen || undefined}>
+        <header className="app-header">
+          <div className="flex items-center gap-3 min-w-0">
+            <button className="navigation-toggle" aria-label="切换导航" aria-controls="workspace-navigation"
+              aria-expanded={window.matchMedia('(max-width: 767px)').matches ? mobileNavOpen : isSidebarOpen}
+              onClick={() => window.matchMedia('(max-width: 767px)').matches ? setMobileNavOpen(open => !open) : setIsSidebarOpen(open => !open)}>
+              <Menu size={18} />
+            </button>
+            <span className="header-workspace">工作空间</span><ChevronRight size={13} className="header-workspace text-outline" />
+            <h1>{currentPage.label}</h1>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
             {versionInfo?.hasUpdate && (
-              <button 
-                onClick={handleUpdate}
-                disabled={isUpdating}
-                className="flex items-center gap-2 px-4 py-1.5 bg-primary text-on-primary rounded-full text-xs font-bold shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
-              >
+              <button onClick={handleUpdate} disabled={isUpdating} className="update-button">
                 <Sparkles size={14} className={isUpdating ? 'animate-spin' : ''} />
-                {isUpdating ? '正在更新...' : `发现新版本 v${versionInfo.latest}`}
+                {isUpdating ? '正在更新…' : `更新至 v${versionInfo.latest}`}
               </button>
             )}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-container border border-outline-variant rounded-full">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-[11px] font-bold text-secondary uppercase tracking-widest">Server Online</span>
-            </div>
+            <span className="version-badge">{versionInfo?.current ? `v${versionInfo.current}` : 'Legado Hub'}</span>
           </div>
         </header>
-
-        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar scroll-smooth">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="max-w-7xl mx-auto"
-          >
+        <div className="workspace-scroll" id="workspace-content">
+          <motion.div key={activeTab} initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: reduceMotion ? 0 : 0.15 }} className={`workspace-content view-${activeTab}`}>
             {renderActiveView}
           </motion.div>
+          <footer className="workspace-footer"><span>Legado Hub</span><span>让阅读井然有序</span></footer>
         </div>
       </main>
 
       {/* Modals */}
-      <AddSubscriptionModal 
-        isOpen={isAddModalOpen} 
-        onClose={() => setIsAddModalOpen(false)} 
+      <AddSubscriptionModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
         onAdded={() => {
           setIsAddModalOpen(false);
           window.dispatchEvent(new CustomEvent('refresh-data'));

@@ -92,7 +92,7 @@ export default function SubscriptionView({ onImport, onExplore, onJsonImport }: 
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">订阅管理</h2>
           <p className="text-sm text-secondary mt-1">配置第三方订阅链接，自动保持书源和规则同步。</p>
@@ -130,7 +130,7 @@ export default function SubscriptionView({ onImport, onExplore, onJsonImport }: 
           </div>
         ) : (
           subs.map((sub) => (
-            <div key={sub.id} className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm flex items-center justify-between group">
+            <div key={sub.id} className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm flex items-center justify-between group subscription-row">
               <div className="flex items-center gap-4 flex-1 min-w-0">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
                   sub.type === 'source' 
@@ -165,14 +165,14 @@ export default function SubscriptionView({ onImport, onExplore, onJsonImport }: 
                     </span>
                   </div>
                   <p className="text-xs text-secondary truncate font-mono mt-1">{sub.url}</p>
-                  <div className="flex items-center gap-4 mt-2 text-[10px] text-secondary font-medium">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-secondary font-medium">
                     <span className="flex items-center gap-1"><Book size={12} /> {sub.item_count} 条项目</span>
                     <span className="flex items-center gap-1"><RefreshCw size={12} /> {sub.last_synced ? formatDate(sub.last_synced) : '从未同步'}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 ml-6">
+              <div className="subscription-row-actions flex items-center gap-3 ml-6">
                 <button 
                   onClick={() => handleToggle(sub.id, !!sub.enabled)}
                   className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${sub.enabled ? 'bg-primary' : 'bg-secondary-container'}`}

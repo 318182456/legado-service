@@ -218,16 +218,16 @@ export default function AssetsView() {
 
   return (
     <div className="space-y-6 pb-20 relative h-full flex flex-col">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant/30 pb-6 shrink-0">
+      <div className="page-heading flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant/30 pb-6 shrink-0">
         <div>
           <h2 className="text-3xl font-bold tracking-tight text-on-surface flex items-center gap-3">
-            <span className="text-4xl">📚</span> Legado 资源中心
+            <Package size={24} className="text-primary" /> 阅读资源
           </h2>
           <p className="text-sm text-secondary mt-1">
             {viewMode === 'explorer' ? '浏览与管理云端 R2 存储的排版布局、字体及背景图片资源。' : '查看已保存到云端的精选定制主题。'}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="asset-view-actions flex items-center gap-3">
           <div className="bg-surface-container p-1 rounded-xl flex gap-1 shadow-inner">
             <button 
               onClick={() => setViewMode('explorer')}
@@ -242,7 +242,7 @@ export default function AssetsView() {
               精选主题 ({customThemes.length})
             </button>
           </div>
-          <div className="relative w-72 flex items-center bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all overflow-hidden">
+          <div className="asset-search relative w-72 flex items-center bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all overflow-hidden">
             <Search className="ml-3 text-secondary shrink-0" size={16} />
             <input 
               type="text"
@@ -284,7 +284,7 @@ export default function AssetsView() {
               </div>
             )}
             
-            <div className="flex items-center gap-3 ml-auto">
+            <div className="asset-filter-toolbar flex flex-wrap items-center gap-3 ml-auto">
               {/* 常用关键字标签 */}
               <div className="hidden lg:flex items-center gap-2 mr-4">
                  <span className="text-[10px] text-outline font-bold uppercase">常用标签:</span>
@@ -300,7 +300,7 @@ export default function AssetsView() {
               </div>
 
               {/* 类型过滤标签 */}
-              <div className="flex bg-surface-container p-1 rounded-xl">
+              <div className="flex flex-wrap bg-surface-container p-1 rounded-xl">
                 {categories.map(cat => (
                   <button 
                     key={cat.id} 
@@ -324,8 +324,8 @@ export default function AssetsView() {
               </button>
 
               <div className="bg-surface-container p-1 rounded-xl flex gap-1">
-                <button onClick={() => setLayoutType('grid')} className={`p-1.5 rounded-lg transition-all ${layoutType === 'grid' ? 'bg-surface-bright text-primary shadow-sm' : 'text-secondary'}`}><LayoutGrid size={16} /></button>
-                <button onClick={() => setLayoutType('list')} className={`p-1.5 rounded-lg transition-all ${layoutType === 'list' ? 'bg-surface-bright text-primary shadow-sm' : 'text-secondary'}`}><List size={16} /></button>
+                <button aria-label="网格视图" aria-pressed={layoutType === 'grid'} onClick={() => setLayoutType('grid')} className={`p-1.5 rounded-lg transition-all ${layoutType === 'grid' ? 'bg-surface-bright text-primary shadow-sm' : 'text-secondary'}`}><LayoutGrid size={16} /></button>
+                <button aria-label="列表视图" aria-pressed={layoutType === 'list'} onClick={() => setLayoutType('list')} className={`p-1.5 rounded-lg transition-all ${layoutType === 'list' ? 'bg-surface-bright text-primary shadow-sm' : 'text-secondary'}`}><List size={16} /></button>
               </div>
             </div>
           </div>

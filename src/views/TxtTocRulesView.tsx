@@ -67,7 +67,7 @@ export default function TxtTocRulesView({ onAdd, onEdit }: TxtTocRulesViewProps)
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">目录规则 (TOC)</h2>
           <p className="text-sm text-secondary mt-1">管理 TXT 文本在导入和解析时的目录分章规则。</p>

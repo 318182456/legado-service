@@ -5,20 +5,20 @@ interface NavItemProps {
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  collapsed?: boolean;
 }
 
-export function NavItem({ active, onClick, icon, label }: NavItemProps) {
+export function NavItem({ active, onClick, icon, label, collapsed = false }: NavItemProps) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-medium ${
-        active 
-          ? 'bg-surface-container text-primary border-l-2 border-primary rounded-l-none' 
-          : 'text-secondary hover:bg-surface-container-low hover:text-primary'
-      }`}
+      aria-current={active ? 'page' : undefined}
+      aria-label={label}
+      title={collapsed ? label : undefined}
+      className={`nav-item ${active ? 'is-active' : ''} ${collapsed ? 'is-collapsed' : ''}`}
     >
       {icon}
-      {label}
+      <span className="nav-label">{label}</span>
     </button>
   );
 }

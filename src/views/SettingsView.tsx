@@ -163,9 +163,9 @@ export default function SettingsView() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight text-on-background">设置</h2>
-        <p className="text-sm text-secondary mt-1">管理系统偏好、认证方式和同步配置。</p>
+      <div className="page-heading">
+        <div><h2 className="text-3xl font-bold tracking-tight text-on-background">设置</h2>
+        <p className="text-sm text-secondary mt-1">管理系统偏好、认证方式和同步配置。</p></div>
       </div>
 
       <div className="flex flex-col gap-6 max-w-4xl">

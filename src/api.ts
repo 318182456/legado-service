@@ -28,8 +28,8 @@ export interface Stats {
     sources: number;
     rules: number;
   };
-  sources: { enabled: number };
-  rules: { enabled: number };
+  sources: { total: number; available: number | null };
+  rules: { total: number };
 }
 
 // ---------- Token 持久化 ----------
