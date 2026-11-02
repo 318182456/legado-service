@@ -663,50 +663,80 @@
             if (idx === 1) loadResources();
         }
         
+        let resourcesLoading = false;
+        let resourcesLoaded = false;
         async function loadResources() {
+            if (resourcesLoading || resourcesLoaded) return;
+            resourcesLoading = true;
             const container = document.getElementById('res-content');
-            if (container.innerHTML !== '') return;
-            
+            const loading = document.getElementById('res-loading');
+            container.replaceChildren();
+            loading.style.display = '';
             try {
-                const res = await fetch('/api/custom-themes');
+                const res = await fetch('/subscribe/themes', { credentials: 'omit', cache: 'no-store' });
+                if (!res.ok || !(res.headers.get('content-type') || '').includes('application/json')) {
+                    throw new Error('主题服务暂不可用（HTTP ' + res.status + '）');
+                }
                 const json = await res.json();
-                const items = json.data || [];
-                console.log('[Theme] Loaded', items.length, 'themes');
-                
-                let html = '<div class="card"><h3>🎨 精选推荐</h3><div class="grid">';
+                if (json.ok !== true || !Array.isArray(json.data)) throw new Error('主题列表格式不正确');
+                const items = json.data;
+                const card = document.createElement('div');
+                card.className = 'card';
+                const title = document.createElement('h3');
+                title.textContent = items.length ? '🎨 精选推荐' : '暂无精选主题';
+                const grid = document.createElement('div');
+                grid.className = 'grid';
+                // ASVS 1.2.1/1.2.2: DOM text and validated URLs, never interpolate stored names into JS/HTML.
                 items.forEach(item => {
-                    const exportUrl = API_ORIGIN + '/api/custom-themes/' + item.id + '/export';
-                    const importUrl = 'legado://import/readConfig?src=' + encodeURIComponent(exportUrl);
-                    
-                    html += '<div class="res-item">' +
-                            '<div class="preview-container" id="preview-' + item.id + '"></div>' +
-                            '<div class="res-name">' + item.name + '</div>' +
-                            '<a href="javascript:void(0);" onclick="triggerThemeImport(\'' + importUrl + '\', \'' + item.name.replace(/'/g, "\\'") + '\')" class="res-btn">一键导入</a>' +
-                            '</div>';
-                });
-                html += '</div></div>';
-                
-                container.innerHTML = html;
-                
-                // 渲染预览
-                items.forEach(item => {
-                    try {
-                        const cfg = typeof item.config === 'string' ? JSON.parse(item.config) : item.config;
-                        renderThemePreview(item.id, cfg, item.preview_url);
-                    } catch (e) {
-                        console.error('Failed to parse theme config', item.id, e);
+                    if (!Number.isSafeInteger(Number(item.id)) || Number(item.id) <= 0) return;
+                    const row = document.createElement('div');
+                    row.className = 'res-item';
+                    const preview = document.createElement('div');
+                    preview.className = 'preview-screen';
+                    if (item.preview_url) {
+                        const url = new URL(item.preview_url, location.origin);
+                        if (url.origin === location.origin && url.pathname.startsWith('/repo/')) {
+                            const image = document.createElement('img');
+                            image.src = url.href;
+                            image.loading = 'lazy';
+                            image.alt = '';
+                            preview.append(image);
+                        }
                     }
+                    if (!preview.childElementCount) preview.textContent = '暂无预览';
+                    const name = document.createElement('div');
+                    name.className = 'res-name';
+                    name.textContent = String(item.name || '未命名主题');
+                    const button = document.createElement('a');
+                    button.className = 'res-btn';
+                    const exportUrl = new URL('/api/custom-themes/' + Number(item.id) + '/export', location.origin);
+                    button.href = 'legado://import/readConfig?src=' + encodeURIComponent(exportUrl.href);
+                    button.textContent = '一键导入';
+                    button.addEventListener('click', event => {
+                        event.preventDefault();
+                        triggerThemeImport(button.href, name.textContent);
+                    });
+                    row.append(preview, name, button);
+                    grid.append(row);
                 });
-                document.getElementById('res-loading').style.display = 'none';
+                card.append(title, grid);
+                container.append(card);
+                resourcesLoaded = true;
             } catch (e) {
-                console.error('[Theme] Load Error', e);
-                container.innerHTML = '<div style="color:red;padding:20px;">加载失败: ' + e.message + '</div>';
+                const message = document.createElement('p');
+                message.style.color = '#f87171';
+                message.textContent = '加载失败：' + e.message;
+                const retry = document.createElement('button');
+                retry.className = 'res-btn';
+                retry.textContent = '重试加载';
+                retry.addEventListener('click', loadResources);
+                container.append(message, retry);
+            } finally {
+                resourcesLoading = false;
+                loading.style.display = 'none';
             }
         }
 
-
-
-        
         // --- 以下函数将由 Worker 动态注入字符串形式 ---
         // {{INJECTED_FUNCTIONS}}
         

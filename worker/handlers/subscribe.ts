@@ -48,6 +48,20 @@ function getRequestOrigin(request: Request): string {
   return `${proto}://${host}`;
 }
 
+/** Public client catalogue: no stored theme configuration or management metadata. */
+export async function handleSubscribeThemes(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, name, preview_url FROM custom_themes ORDER BY created_at DESC"
+  ).all();
+  return new Response(JSON.stringify({ ok: true, data: results }), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 export async function handleSubscribeIndex(request: Request, env: Env): Promise<Response> {
   const origin = getRequestOrigin(request);
   

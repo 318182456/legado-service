@@ -80,6 +80,7 @@ export default {
       if (path === "/subscribe/rules" && method === "GET") return subscribe.handleSubscribeOutput(env, "rules");
       if (path === "/subscribe/txtTocRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "txtTocRules");
       if (path === "/subscribe/dictRules" && method === "GET") return subscribe.handleSubscribeOutput(env, "dictRules");
+      if (path === "/subscribe/themes" && method === "GET") return subscribe.handleSubscribeThemes(env);
       if (path === "/subscribe/index" && method === "GET") return subscribe.handleSubscribeIndex(request, env);
       if (path === "/subscribe/info.json" && method === "GET") return subscribe.handleSubscribeInfo(request);
 
