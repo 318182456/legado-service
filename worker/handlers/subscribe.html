@@ -663,6 +663,17 @@
             if (idx === 1) loadResources();
         }
         
+        function themePreviewUrl(value, origin) {
+            if (typeof value !== 'string' || !value || value.length > 4 * 1024 * 1024) return null;
+            // Canvas thumbnails are raster data URLs; never accept SVG or arbitrary data documents.
+            if (/^data:image\/(?:webp|png|jpeg|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)) return value;
+            try {
+                const url = new URL(value, origin);
+                if (url.origin === origin && !url.username && !url.password && url.pathname.startsWith('/repo/')) return url.href;
+            } catch (_) {}
+            return null;
+        }
+
         let resourcesLoading = false;
         let resourcesLoaded = false;
         async function loadResources() {
@@ -693,15 +704,13 @@
                     row.className = 'res-item';
                     const preview = document.createElement('div');
                     preview.className = 'preview-screen';
-                    if (item.preview_url) {
-                        const url = new URL(item.preview_url, location.origin);
-                        if (url.origin === location.origin && url.pathname.startsWith('/repo/')) {
-                            const image = document.createElement('img');
-                            image.src = url.href;
-                            image.loading = 'lazy';
-                            image.alt = '';
-                            preview.append(image);
-                        }
+                    const previewUrl = themePreviewUrl(item.preview_url, location.origin);
+                    if (previewUrl) {
+                        const image = document.createElement('img');
+                        image.src = previewUrl;
+                        image.loading = 'lazy';
+                        image.alt = String(item.name || '主题预览');
+                        preview.append(image);
                     }
                     if (!preview.childElementCount) preview.textContent = '暂无预览';
                     const name = document.createElement('div');

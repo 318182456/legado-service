@@ -27,3 +27,26 @@ test('empty subscription catalogue succeeds with an empty collection', async () 
   assert.deepEqual(await (await handleSubscribeThemes(env)).json(), { ok: true, data: [] });
 });
 
+
+test('subscription preview accepts canvas raster thumbnails and same-origin resources only', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { runInNewContext } = await import('node:vm');
+  const html = readFileSync(new URL('../worker/handlers/subscribe.html', import.meta.url), 'utf8');
+  const start = html.indexOf('        function themePreviewUrl(');
+  const end = html.indexOf('        let resourcesLoading', start);
+  assert.ok(start > 0 && end > start);
+  const context = { URL, resolve: null as any };
+  runInNewContext(html.slice(start, end) + ';resolve = themePreviewUrl;', context);
+  const origin = 'https://reader.example.test:8443';
+  for (const type of ['webp', 'png', 'jpeg', 'gif']) {
+    const src = 'data:image/' + type + ';base64,AAAA';
+    assert.equal(context.resolve(src, origin), src);
+  }
+  assert.equal(context.resolve('/repo/previews/a.png', origin), origin + '/repo/previews/a.png');
+  for (const src of [null, '', 'data:image/svg+xml;base64,AAAA', 'data:text/html;base64,AAAA',
+    'javascript:alert(1)', 'data:image/webp;base64,AA" onerror="alert(1)',
+    'https://outside.example.test/repo/a.png', '/api/system/config',
+    'https://u:p@reader.example.test:8443/repo/a.png']) {
+    assert.equal(context.resolve(src, origin), null);
+  }
+});
