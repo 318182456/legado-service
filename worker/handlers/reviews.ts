@@ -249,7 +249,7 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
     bookUrl: (url.searchParams.get("bookUrl") ?? "").trim(),
     originUrl: (url.searchParams.get("origin") ?? "").trim(),
   });
-  const list = aligned ?? (await summarize(env, bookKey, chapterKey, paraDataStr));
+  const list = aligned?.list ?? (await summarize(env, bookKey, chapterKey, paraDataStr));
 
   // 规则书源带不了正文，改由服务端借 reader 去抓，然后自行生成。
   // 这一步不阻塞响应：抓目录 + 抓正文 + 调模型远超 App 的请求超时，
@@ -297,7 +297,11 @@ export async function handleReviewSummaryQuery(env: Env, url: URL): Promise<Resp
       new Promise<boolean>((r) => setTimeout(() => r(false), SYNC_WAIT_MS)),
     ]);
     if (generated) {
-      const fresh = await summarize(env, bookKey, chapterKey, paraDataStr);
+      // Preserve the requesting source's paragraph alignment, including an empty result.
+      // Re-read comments after generation against the same body, not their stored paragraph numbers.
+      const fresh = aligned
+        ? await summarizeAligned(env, bookKey, chapterKey, paraDataStr, aligned.paragraphs)
+        : await summarize(env, bookKey, chapterKey, paraDataStr);
       if (fresh.length) {
         console.log(
           `[段评] 同步生成完成，本次直接带回 ${fresh.length} 段` +
@@ -477,7 +481,10 @@ async function alignWithFetchedContent(
     bookUrl: string;
     originUrl: string;
   }
-): Promise<{ paraIndex: number; count: number; paraData: string }[] | null> {
+): Promise<{
+  list: { paraIndex: number; count: number; paraData: string }[];
+  paragraphs: string[];
+} | null> {
   // 这条路整个失效时只会默默回退到原始段号，日志里看不出任何线索，
   // 所以每个退出点都要报出原因
   if (!opts.bookUrl || !opts.originUrl) {
@@ -516,13 +523,10 @@ async function alignWithFetchedContent(
       return null;
     }
 
-    return await summarizeAligned(
-      env,
-      opts.bookKey,
-      opts.chapterKey,
-      opts.paraData,
-      paragraphs
-    );
+    return {
+      list: await summarizeAligned(env, opts.bookKey, opts.chapterKey, opts.paraData, paragraphs),
+      paragraphs,
+    };
   } catch (e) {
     console.error(`[段评] 取正文校正段号失败：${(e as Error).message}`);
     return null;
