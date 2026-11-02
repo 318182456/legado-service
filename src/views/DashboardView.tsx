@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BookOpen, Sparkles, RefreshCw, Copy, ArrowUpRight, ArrowRight, Check, Download, ListRestart, Upload, Package } from 'lucide-react';
 import QRCode from 'qrcode';
 import * as api from '../api';
+import { WorkspaceHeader } from '../components/Workspace';
 import { StatCard } from '../components/StatCard';
 
 interface DashboardViewProps {
@@ -63,21 +64,30 @@ export default function DashboardView({ onImport, onNavigate }: DashboardViewPro
   };
 
   return (
-    <div className="dashboard space-y-7">
-      <div className="page-heading">
-        <div><p className="page-eyebrow">WORKSPACE OVERVIEW</p><h2>阅读，从这里开始。</h2><p className="page-description">书源、订阅与阅读资源，一处打理。</p></div>
-        <div className="page-actions">
-          <button onClick={fetchData} disabled={loading} className="button-secondary"><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />刷新</button>
-          <button onClick={onImport} className="button-primary"><Upload size={15} />导入数据</button>
-        </div>
-      </div>
+    <div className="studio-view dashboard dashboard-studio">
+      <WorkspaceHeader eyebrow="YOUR READING WORKSPACE" title="你的阅读，井然有序。" description="从连接书源，到整理内容，再到沉浸阅读。所有准备，都在这里。"
+        actions={<><button className="button-secondary" onClick={onImport}><Upload size={16} />导入内容</button><a className="button-primary" href="/reader3/" target="_blank" rel="noopener noreferrer"><BookOpen size={16} />进入阅读器<ArrowUpRight size={15} /></a></>} />
       {error && <div className="notice-error" role="alert">{error}<button onClick={fetchData}>重新加载</button></div>}
+      <div className="dashboard-workflow" aria-label="阅读工作流程">
+        {[{number:'01',title:'连接内容',description:'添加和同步订阅',tab:'subscriptions',icon:ListRestart},{number:'02',title:'整理书库',description:'验证书源与净化文字',tab:'sources',icon:Sparkles},{number:'03',title:'定义风格',description:'设计专属阅读主题',tab:'assets',icon:Package}].map(item => <button key={item.tab} onClick={() => onNavigate(item.tab)}><span className="workflow-number">{item.number}</span><span><strong>{item.title}</strong><small>{item.description}</small></span><item.icon size={24} /><ArrowUpRight size={16} /></button>)}
+      </div>
+      <div className="dashboard-layout"><div className="dashboard-left">
+        <section className="dashboard-library-overview"><div className="section-heading"><div><h3>内容概况</h3><p>工作空间中正在启用的阅读内容</p></div><button className="text-action" disabled={loading} onClick={fetchData}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />刷新</button></div>
       <div className="dashboard-stats" aria-busy={loading}>
         <StatCard icon={<BookOpen size={19} />} label="已启用书源" value={stats?.sources?.total?.toLocaleString() ?? '—'} color="bg-primary/10 text-primary" />
         <StatCard icon={<ListRestart size={19} />} label="已启用订阅" value={stats?.subscriptions?.total?.toLocaleString() ?? '—'} color="bg-primary/10 text-primary" />
         <StatCard icon={<Sparkles size={19} />} label="净化规则" value={stats?.rules?.total?.toLocaleString() ?? '—'} color="bg-tertiary/10 text-tertiary" />
       </div>
-      <div className="dashboard-middle">
+        </section>
+      <section className="recent-panel" aria-labelledby="recent-title">
+        <div className="section-heading"><div><h3 id="recent-title">书源一览</h3><p>查看书源的启用状态与更新时间</p></div><button onClick={() => onNavigate('sources')} className="text-action">全部书源<ArrowRight size={14} /></button></div>
+        <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>书源名称</th><th>分组</th><th>更新时间</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead><tbody>
+          {recentSources.length === 0 ? <tr><td colSpan={5} className="dashboard-empty">{loading ? '正在加载书源…' : error ? '数据暂不可用' : <><BookOpen size={28} /><p>还没有书源，从导入第一份订阅开始。</p><button onClick={onImport} className="text-action">导入数据<ArrowRight size={14} /></button></>}</td></tr> : recentSources.map(source => (
+            <tr key={source.id}><td><div className="source-cell"><span className="source-monogram">{Array.from(source.name || '?')[0] as string}</span><span><strong>{source.name || '未命名书源'}</strong><small>{source.book_source_url}</small></span></div></td><td className="text-secondary">{source.group_name || '未分组'}</td><td className="text-secondary tabular-nums whitespace-nowrap">{formatDate(source.updated_at)}</td><td><span className={`status-badge ${source.enabled ? 'is-enabled' : ''}`}><span />{source.enabled ? '已启用' : '已禁用'}</span></td><td><button className="row-action" onClick={() => onNavigate('sources')} aria-label={`管理书源：${source.name}`}><ArrowUpRight size={16} /></button></td></tr>
+          ))}
+        </tbody></table></div>
+      </section>
+      </div><aside className="dashboard-right">
         <section className="subscription-panel" aria-labelledby="subscription-title">
           <div className="subscription-panel-copy">
             <span className="panel-eyebrow"><span /> ONE LINK, ALL YOUR SOURCES</span>
@@ -96,16 +106,7 @@ export default function DashboardView({ onImport, onNavigate }: DashboardViewPro
             { tab: 'sources', icon: BookOpen, title: '整理书源', description: '检测可用性，管理分组' },
             { tab: 'assets', icon: Package, title: '阅读资源', description: '主题、字体与背景图片' },
           ].map(item => <button key={item.tab} onClick={() => onNavigate(item.tab)} className="quick-action"><span className="quick-action-icon"><item.icon size={18} /></span><span><strong>{item.title}</strong><small>{item.description}</small></span><ArrowUpRight size={15} /></button>)}
-        </section>
-      </div>
-      <section className="recent-panel" aria-labelledby="recent-title">
-        <div className="section-heading"><div><h3 id="recent-title">书源一览</h3><p>查看书源的启用状态与更新时间</p></div><button onClick={() => onNavigate('sources')} className="text-action">全部书源<ArrowRight size={14} /></button></div>
-        <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>书源名称</th><th>分组</th><th>更新时间</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead><tbody>
-          {recentSources.length === 0 ? <tr><td colSpan={5} className="dashboard-empty">{loading ? '正在加载书源…' : error ? '数据暂不可用' : <><BookOpen size={28} /><p>还没有书源，从导入第一份订阅开始。</p><button onClick={onImport} className="text-action">导入数据<ArrowRight size={14} /></button></>}</td></tr> : recentSources.map(source => (
-            <tr key={source.id}><td><div className="source-cell"><span className="source-monogram">{Array.from(source.name || '?')[0] as string}</span><span><strong>{source.name || '未命名书源'}</strong><small>{source.book_source_url}</small></span></div></td><td className="text-secondary">{source.group_name || '未分组'}</td><td className="text-secondary tabular-nums whitespace-nowrap">{formatDate(source.updated_at)}</td><td><span className={`status-badge ${source.enabled ? 'is-enabled' : ''}`}><span />{source.enabled ? '已启用' : '已禁用'}</span></td><td><button className="row-action" onClick={() => onNavigate('sources')} aria-label={`管理书源：${source.name}`}><ArrowUpRight size={16} /></button></td></tr>
-          ))}
-        </tbody></table></div>
-      </section>
+        </section>      </aside></div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Trash2, MessageSquare, Sparkles, Send, BookOpen, Settings2, AlertTriangle, Copy, Syringe, Undo2, Stethoscope, Library, SearchCheck, ChevronRight, ChevronDown } from 'lucide-react';
 import * as api from '../api';
+import { WorkspaceHeader, WorkspaceTabs } from '../components/Workspace';
 
 /** 每页评论条数。章节折叠后一页能列出不少章，200 足够一次看完大半本 */
 const REVIEW_PAGE_SIZE = 200;
@@ -31,7 +32,7 @@ export default function ReviewsView() {
   const [reviewTotal, setReviewTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [showConfig, setShowConfig] = useState(false);
+  const [activePanel, setActivePanel] = useState('content');
 
   // AI 配置表单
   const [apiKey, setApiKey] = useState('');
@@ -46,7 +47,7 @@ export default function ReviewsView() {
   const [reviewToken, setReviewToken] = useState('');
   const [autoFetch, setAutoFetch] = useState(true);
   const [autoRetry, setAutoRetry] = useState(true);
-  const [showFailures, setShowFailures] = useState(false);
+  const [showFailures, setShowFailures] = useState(true);
   const [failures, setFailures] = useState<api.ReviewFailure[]>([]);
   const [failureMessage, setFailureMessage] = useState('');
   const [failureRefresh, setFailureRefresh] = useState(0);
@@ -125,7 +126,7 @@ export default function ReviewsView() {
   }, []);
 
   useEffect(() => {
-    if (!showFailures) return;
+    if (!showFailures || activePanel !== 'failures') return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let disposed = false;
@@ -144,7 +145,7 @@ export default function ReviewsView() {
     };
     refresh();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [showFailures, activeBook?.book_key, failureRefresh]);
+  }, [showFailures, activePanel, activeBook?.book_key, failureRefresh]);
 
   const handleRetryFailures = async (chapter?: api.ReviewFailure) => {
     setRetrySubmitting(true);
@@ -446,29 +447,10 @@ export default function ReviewsView() {
   const stats = config?.stats;
 
   return (
-    <div className="space-y-6">
-      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">段评</h2>
-          <p className="text-sm text-secondary mt-1">
-            AI 陪读评论与个人批注。App 端段评是只读的，批注只能从这里发布。
-            {config?.version && (
-              <span className="ml-2 px-1.5 py-0.5 rounded bg-surface-container-low text-xs font-mono">
-                服务 v{config.version}
-              </span>
-            )}
-          </p>
-        </div>
-        <button
-          onClick={() => setShowConfig((v) => !v)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-outline-variant hover:bg-surface-container-low transition-all"
-        >
-          <Settings2 size={16} />
-          生成配置
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="studio-view review-studio">
+      <WorkspaceHeader eyebrow="READING / ANNOTATIONS" title="段评与批注" description="管理陪读评论与个人想法，让每一段文字都有回应。"
+        actions={<button className="button-primary" onClick={() => setActivePanel('compose')}><Send size={16} />发表批注</button>} />
+      <div className="review-summary">
         <StatCard label="AI 段评" value={stats?.aiCount ?? 0} icon={<Sparkles size={16} />} />
         <StatCard label="个人批注" value={stats?.humanCount ?? 0} icon={<MessageSquare size={16} />} />
         <StatCard label="已处理章节" value={stats?.chapterCount ?? 0} icon={<BookOpen size={16} />} />
@@ -480,40 +462,123 @@ export default function ReviewsView() {
         />
       </div>
 
-      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
-        <button onClick={() => setShowFailures(value => !value)} className="w-full px-5 py-3 text-left font-semibold text-sm">
-          失败记录与重试（{stats?.failedCount ?? 0}）{showFailures ? ' · 收起' : ' · 展开'}
-        </button>
-        {showFailures && <div className="px-5 pb-4 space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={autoRetry} onChange={event => handleAutoRetry(event.target.checked)} />
-            自动重试临时失败（最多 3 次，间隔约 1、5、15 分钟）
-          </label>
-          <p className="text-xs text-secondary">每批最多 10 章，串行处理。鉴权和配置错误需修复后手动重试；成功后清除失败原因，保留成功段评及人工批注。</p>
-          <div className="flex flex-wrap items-center gap-3">
-            <button onClick={() => handleRetryFailures()} disabled={retrySubmitting} className="px-3 py-2 text-sm rounded-lg bg-primary text-on-primary disabled:opacity-50">
-              {retrySubmitting ? '排队中...' : activeBook ? '重试本书失败章节' : '重试失败章节（每批 10 章）'}
-            </button>
-            {activeBook && <button onClick={() => setActiveBook(null)} className="text-sm text-secondary">查看全部失败</button>}
-            <button onClick={() => setFailureRefresh(value => value + 1)} className="text-sm text-secondary">刷新失败记录</button>
-          </div>
-          {failureMessage && <p role="status" className="text-sm text-secondary">{failureMessage}</p>}
-          {failures.length === 0 ? <p className="text-sm text-secondary">暂无失败记录。</p> : <div className="divide-y divide-outline-variant">
-            {failures.map(failure => <div key={failure.id} className="py-3 flex justify-between items-start gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">《{failure.book_name}》 · {failure.chapter_title}</p>
-                <p className="text-xs text-error break-words mt-1">{failure.error || '生成失败'}</p>
-                <p className="text-xs text-secondary mt-1">{failure.status === 'generating' ? '排队或重试中' : failure.status === 'pending' ? '等待 App 提供正文' :
-                  failure.auto_retryable && failure.retry_after && autoRetry ? `下次重试：${new Date(failure.retry_after).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : '等待手动重试'} · 已重试 {failure.retry_count} 次</p>
-              </div>
-              <button onClick={() => handleRetryFailures(failure)} disabled={retrySubmitting || failure.status !== 'failed'} className="shrink-0 text-sm text-primary disabled:opacity-40">重试此章</button>
-            </div>)}
-          </div>}
-        </div>}
-      </section>
-
-      {showConfig && (
+      <WorkspaceTabs label="段评功能" value={activePanel} onChange={setActivePanel} items={[
+        {id:'content',label:'批注管理'}, {id:'generation',label:'AI 生成配置'}, {id:'integration',label:'书源接入'},
+        {id:'failures',label:'失败与重试',count:stats?.failedCount ?? 0}, {id:'diagnostics',label:'诊断工具'}, {id:'compose',label:'发表批注'},
+      ]} />
+      <div className="review-panels">
+        <div hidden={activePanel !== 'content'} className="review-panel" aria-label="批注管理">      <div className="review-content-layout">
         <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-outline-variant bg-surface-bright">
+            <h3 className="font-semibold text-sm">书目（{books.length}）</h3>
+          </div>
+          <div className="divide-y divide-outline-variant max-h-112 overflow-y-auto">
+            {books.length === 0 ? (
+              <p className="p-5 text-sm text-secondary text-center">
+                还没有任何书。用装了段评混入的书源打开一章，或切换到「发表批注」记录你的想法。
+              </p>
+            ) : (
+              books.map((b) => (
+                <button
+                  key={b.book_key}
+                  onClick={() => openBook(b)}
+                  className={`w-full text-left px-5 py-3 hover:bg-surface-container-low transition-colors ${
+                    activeBook?.book_key === b.book_key ? 'bg-surface-container-low' : ''
+                  }`}
+                >
+                  <p className="text-sm font-medium truncate">{b.book_name}</p>
+                  <p className="text-xs text-secondary mt-0.5">
+                    {b.author || '佚名'} · {b.chapter_count} 章
+                    {b.failed_count > 0 && (
+                      <span className="text-error"> · {b.failed_count} 章生成失败</span>
+                    )}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
+            <h3 className="font-semibold text-sm">
+              {activeBook ? `《${activeBook.book_name}》的评论` : '评论'}
+            </h3>
+            {activeBook && (
+              <button onClick={handleClearAi} className="text-xs text-error hover:underline">
+                清空本书 AI 段评
+              </button>
+            )}
+          </div>
+          <div className="divide-y divide-outline-variant max-h-112 overflow-y-auto">
+            {!activeBook ? (
+              <p className="p-5 text-sm text-secondary text-center">从左侧选一本书查看评论。</p>
+            ) : reviews.length === 0 ? (
+              <p className="p-5 text-sm text-secondary text-center">这本书还没有评论。</p>
+            ) : (
+              groupByChapter(reviews).map(([title, items]) => (
+                <div key={title}>
+                  <button
+                    onClick={() => toggleChapter(title)}
+                    className="w-full px-5 py-2 bg-surface-container-low sticky top-0 flex items-center justify-between gap-2 hover:bg-surface-container text-left"
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {openChapters.has(title) ? (
+                        <ChevronDown size={14} className="shrink-0 text-secondary" />
+                      ) : (
+                        <ChevronRight size={14} className="shrink-0 text-secondary" />
+                      )}
+                      <span className="text-xs font-medium truncate">{title}</span>
+                    </span>
+                    <span className="text-xs text-secondary shrink-0">{items.length} 条</span>
+                  </button>
+                  {openChapters.has(title) && items.map((r) => (
+                    <div key={r.id} className="px-5 py-3 flex items-start gap-3 border-t border-outline-variant">
+                      <span
+                        className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${
+                          r.origin === 'ai'
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-tertiary/10 text-tertiary'
+                        }`}
+                      >
+                        {r.origin === 'ai' ? 'AI' : '我'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-secondary">
+                          {r.author} · 第 {r.para_index === -1 ? '标题' : r.para_index} 段
+                          {r.reply_to && <span> · 回复 #{r.reply_to}</span>}
+                        </p>
+                        <p className="text-sm mt-1 wrap-break-word">{r.content}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDelete(r.id)}
+                        className="shrink-0 text-outline hover:text-error transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+            {activeBook && reviews.length < reviewTotal && (
+              <button
+                onClick={loadMoreReviews}
+                disabled={loadingMore}
+                className="w-full px-5 py-3 text-xs text-primary hover:bg-surface-container-low transition-colors disabled:opacity-50"
+              >
+                {loadingMore
+                  ? '加载中…'
+                  : `加载更多（已显示 ${reviews.length} / ${reviewTotal} 条）`}
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+
+</div>
+        <div hidden={activePanel !== 'generation'} className="review-panel" aria-label="AI 生成配置">        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
           <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
             <h3 className="font-semibold text-on-surface">AI 生成配置</h3>
             <p className="text-xs text-secondary mt-1">
@@ -729,9 +794,8 @@ export default function ReviewsView() {
             </div>
           </div>
         </section>
-      )}
-
-      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+</div>
+        <div hidden={activePanel !== 'integration'} className="review-panel" aria-label="书源接入">      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
           <h3 className="font-semibold text-on-surface">书源接入</h3>
           <p className="text-xs text-secondary mt-1">
@@ -852,117 +916,41 @@ export default function ReviewsView() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 py-3 border-b border-outline-variant bg-surface-bright">
-            <h3 className="font-semibold text-sm">书目（{books.length}）</h3>
+</div>
+        <div hidden={activePanel !== 'failures'} className="review-panel" aria-label="失败与重试">      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden">
+        <button onClick={() => setShowFailures(value => !value)} className="w-full px-5 py-3 text-left font-semibold text-sm">
+          失败记录与重试（{stats?.failedCount ?? 0}）{showFailures ? ' · 收起' : ' · 展开'}
+        </button>
+        {showFailures && <div className="px-5 pb-4 space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={autoRetry} onChange={event => handleAutoRetry(event.target.checked)} />
+            自动重试临时失败（最多 3 次，间隔约 1、5、15 分钟）
+          </label>
+          <p className="text-xs text-secondary">每批最多 10 章，串行处理。鉴权和配置错误需修复后手动重试；成功后清除失败原因，保留成功段评及人工批注。</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => handleRetryFailures()} disabled={retrySubmitting} className="px-3 py-2 text-sm rounded-lg bg-primary text-on-primary disabled:opacity-50">
+              {retrySubmitting ? '排队中...' : activeBook ? '重试本书失败章节' : '重试失败章节（每批 10 章）'}
+            </button>
+            {activeBook && <button onClick={() => setActiveBook(null)} className="text-sm text-secondary">查看全部失败</button>}
+            <button onClick={() => setFailureRefresh(value => value + 1)} className="text-sm text-secondary">刷新失败记录</button>
           </div>
-          <div className="divide-y divide-outline-variant max-h-112 overflow-y-auto">
-            {books.length === 0 ? (
-              <p className="p-5 text-sm text-secondary text-center">
-                还没有任何书。用装了段评混入的书源打开一章，或在右侧直接发一条批注。
-              </p>
-            ) : (
-              books.map((b) => (
-                <button
-                  key={b.book_key}
-                  onClick={() => openBook(b)}
-                  className={`w-full text-left px-5 py-3 hover:bg-surface-container-low transition-colors ${
-                    activeBook?.book_key === b.book_key ? 'bg-surface-container-low' : ''
-                  }`}
-                >
-                  <p className="text-sm font-medium truncate">{b.book_name}</p>
-                  <p className="text-xs text-secondary mt-0.5">
-                    {b.author || '佚名'} · {b.chapter_count} 章
-                    {b.failed_count > 0 && (
-                      <span className="text-error"> · {b.failed_count} 章生成失败</span>
-                    )}
-                  </p>
-                </button>
-              ))
-            )}
-          </div>
-        </section>
+          {failureMessage && <p role="status" className="text-sm text-secondary">{failureMessage}</p>}
+          {failures.length === 0 ? <p className="text-sm text-secondary">暂无失败记录。</p> : <div className="divide-y divide-outline-variant">
+            {failures.map(failure => <div key={failure.id} className="py-3 flex justify-between items-start gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">《{failure.book_name}》 · {failure.chapter_title}</p>
+                <p className="text-xs text-error break-words mt-1">{failure.error || '生成失败'}</p>
+                <p className="text-xs text-secondary mt-1">{failure.status === 'generating' ? '排队或重试中' : failure.status === 'pending' ? '等待 App 提供正文' :
+                  failure.auto_retryable && failure.retry_after && autoRetry ? `下次重试：${new Date(failure.retry_after).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}` : '等待手动重试'} · 已重试 {failure.retry_count} 次</p>
+              </div>
+              <button onClick={() => handleRetryFailures(failure)} disabled={retrySubmitting || failure.status !== 'failed'} className="shrink-0 text-sm text-primary disabled:opacity-40">重试此章</button>
+            </div>)}
+          </div>}
+        </div>}
+      </section>
 
-        <section className="lg:col-span-2 bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 py-3 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
-            <h3 className="font-semibold text-sm">
-              {activeBook ? `《${activeBook.book_name}》的评论` : '评论'}
-            </h3>
-            {activeBook && (
-              <button onClick={handleClearAi} className="text-xs text-error hover:underline">
-                清空本书 AI 段评
-              </button>
-            )}
-          </div>
-          <div className="divide-y divide-outline-variant max-h-112 overflow-y-auto">
-            {!activeBook ? (
-              <p className="p-5 text-sm text-secondary text-center">从左侧选一本书查看评论。</p>
-            ) : reviews.length === 0 ? (
-              <p className="p-5 text-sm text-secondary text-center">这本书还没有评论。</p>
-            ) : (
-              groupByChapter(reviews).map(([title, items]) => (
-                <div key={title}>
-                  <button
-                    onClick={() => toggleChapter(title)}
-                    className="w-full px-5 py-2 bg-surface-container-low sticky top-0 flex items-center justify-between gap-2 hover:bg-surface-container text-left"
-                  >
-                    <span className="flex items-center gap-1.5 min-w-0">
-                      {openChapters.has(title) ? (
-                        <ChevronDown size={14} className="shrink-0 text-secondary" />
-                      ) : (
-                        <ChevronRight size={14} className="shrink-0 text-secondary" />
-                      )}
-                      <span className="text-xs font-medium truncate">{title}</span>
-                    </span>
-                    <span className="text-xs text-secondary shrink-0">{items.length} 条</span>
-                  </button>
-                  {openChapters.has(title) && items.map((r) => (
-                    <div key={r.id} className="px-5 py-3 flex items-start gap-3 border-t border-outline-variant">
-                      <span
-                        className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${
-                          r.origin === 'ai'
-                            ? 'bg-primary/10 text-primary'
-                            : 'bg-tertiary/10 text-tertiary'
-                        }`}
-                      >
-                        {r.origin === 'ai' ? 'AI' : '我'}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs text-secondary">
-                          {r.author} · 第 {r.para_index === -1 ? '标题' : r.para_index} 段
-                          {r.reply_to && <span> · 回复 #{r.reply_to}</span>}
-                        </p>
-                        <p className="text-sm mt-1 wrap-break-word">{r.content}</p>
-                      </div>
-                      <button
-                        onClick={() => handleDelete(r.id)}
-                        className="shrink-0 text-outline hover:text-error transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ))
-            )}
-            {activeBook && reviews.length < reviewTotal && (
-              <button
-                onClick={loadMoreReviews}
-                disabled={loadingMore}
-                className="w-full px-5 py-3 text-xs text-primary hover:bg-surface-container-low transition-colors disabled:opacity-50"
-              >
-                {loadingMore
-                  ? '加载中…'
-                  : `加载更多（已显示 ${reviews.length} / ${reviewTotal} 条）`}
-              </button>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+</div>
+        <div hidden={activePanel !== 'diagnostics'} className="review-panel" aria-label="诊断工具">      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
           <h3 className="font-semibold text-on-surface">诊断</h3>
           <p className="text-xs text-secondary mt-1">
@@ -1143,7 +1131,8 @@ export default function ReviewsView() {
         </div>
       </section>
 
-      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+</div>
+        <div hidden={activePanel !== 'compose'} className="review-panel" aria-label="发表批注">      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
         <div className="px-6 py-4 border-b border-outline-variant bg-surface-bright">
           <h3 className="font-semibold text-on-surface">发表批注</h3>
           <p className="text-xs text-secondary mt-1">
@@ -1215,6 +1204,8 @@ export default function ReviewsView() {
           </button>
         </div>
       </section>
+</div>
+      </div>
     </div>
   );
 }

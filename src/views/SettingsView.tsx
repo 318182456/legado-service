@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Fingerprint, ShieldCheck, Plus, RefreshCw, Info, Package, Globe, SlidersHorizontal } from 'lucide-react';
 import * as api from '../api';
+import { WorkspaceHeader } from '../components/Workspace';
 
 const formatDate = (dateInput: string | number | Date) => {
   if (!dateInput) return '-';
@@ -22,6 +23,7 @@ const formatDate = (dateInput: string | number | Date) => {
 };
 
 export default function SettingsView() {
+  const [activeSection, setActiveSection] = useState('general');
   const [passkeys, setPasskeys] = useState<api.PasskeyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncingAll, setSyncingAll] = useState(false);
@@ -83,7 +85,7 @@ export default function SettingsView() {
       if (res && res.updatedFiles) {
         setUpdatedFiles(res.updatedFiles);
       }
-      
+
       // 开始高可用健康轮询检测重启状态
       let attempts = 0;
       const interval = setInterval(async () => {
@@ -97,7 +99,7 @@ export default function SettingsView() {
         } catch (e) {
           console.log('正在监测系统重启状态...', attempts);
         }
-        
+
         if (attempts > 30) { // 最多等待 30 秒
           clearInterval(interval);
           alert('系统重启可能需要较长时间，请稍后手动刷新页面。');
@@ -148,7 +150,7 @@ export default function SettingsView() {
     e.preventDefault();
     setSavingConfig(true);
     try {
-      await api.saveSystemConfig({ 
+      await api.saveSystemConfig({
         github_proxy: githubProxy.trim(),
         default_page_anim: defaultPageAnim
       });
@@ -162,132 +164,16 @@ export default function SettingsView() {
 
 
   return (
-    <div className="space-y-8">
-      <div className="page-heading">
-        <div><h2 className="text-3xl font-bold tracking-tight text-on-background">设置</h2>
-        <p className="text-sm text-secondary mt-1">管理系统偏好、认证方式和同步配置。</p></div>
-      </div>
-
-      <div className="flex flex-col gap-6 max-w-4xl">
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
-          <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
-            <div>
-              <h3 className="font-semibold text-lg text-on-surface">Passkey 身份认证</h3>
-              <p className="text-xs text-secondary mt-1">使用生物识别或硬件密钥安全登录，无需输入密码。</p>
-            </div>
-            <Fingerprint className="text-primary" size={24} />
-          </div>
-          <div className="p-8 space-y-6">
-            {loading ? (
-              <div className="text-center py-4 text-secondary">加载中...</div>
-            ) : (
-              <div className="space-y-4">
-                {passkeys.length === 0 ? (
-                  <div className="bg-surface-container-low p-4 rounded-lg text-center border border-dashed border-outline-variant">
-                    <p className="text-sm text-secondary">尚未注册任何 Passkey</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-outline-variant">
-                    {passkeys.map((pk) => (
-                      <div key={pk.id} className="py-3 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <ShieldCheck className="text-primary" size={20} />
-                          <div>
-                            <p className="text-sm font-medium">{pk.name}</p>
-                            <p className="text-xs text-secondary">注册于 {formatDate(pk.created_at)}</p>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => handleDelete(pk.id)}
-                          className="text-xs text-error hover:underline"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button 
-                  onClick={handleRegister}
-                  className="w-full flex items-center justify-center gap-2 bg-primary text-on-primary py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-all shadow-sm"
-                >
-                  <Plus size={18} />
-                  注册新 Passkey
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="px-8 py-4 bg-surface border-t border-outline-variant">
-            <div className="text-xs text-secondary flex items-start gap-2">
-              <Info className="mt-0.5 shrink-0" size={16} />
-              建议在常用的设备上注册 Passkey，以获得更便捷的登录体验。
-            </div>
-          </div>
-        </section>
-
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
-          <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
-            <div>
-              <h3 className="font-semibold text-lg text-on-surface">系统版本与更新</h3>
-              <p className="text-xs text-secondary mt-1">管理系统版本并获取最新功能。</p>
-            </div>
-            <Package className="text-primary" size={24} />
-          </div>
-          <div className="p-8 space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold">当前版本：v{versionInfo?.current || '1.0.0'}</p>
-                <p className="text-xs text-secondary mt-1">
-                  {versionInfo?.hasUpdate 
-                    ? `发现新版本 v${versionInfo.latest}，建议立即升级。` 
-                    : '已是最新版本。若有新提交，也可通过右侧按钮强制拉取主线最新代码进行升级。'}
-                </p>
-              </div>
-              <button 
-                onClick={handleUpdate}
-                disabled={isUpdating}
-                className="bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
-              >
-                <RefreshCw size={16} className={isUpdating ? 'animate-spin' : ''} />
-                {isUpdating ? '正在更新...' : versionInfo?.hasUpdate ? '立即升级' : '强制在线更新'}
-              </button>
-            </div>
-
-            {updatedFiles && (
-              <div className="mt-4 border border-outline-variant bg-[#1e1e1e] text-[#d4d4d4] font-mono text-xs rounded-lg overflow-hidden shadow-inner">
-                <div className="bg-[#2d2d2d] px-4 py-2 border-b border-[#3c3c3c] flex justify-between items-center text-[#9b9b9b]">
-                  <span>已更新文件列表 ({updatedFiles.length} 个项目)</span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]" />
-                  </span>
-                </div>
-                <div className="p-4 max-h-60 overflow-y-auto space-y-1 scrollbar-thin">
-                  {updatedFiles.length === 0 ? (
-                    <div className="text-[#858585] text-center py-2">所有代码文件均已是最新，无文件发生实际变更。</div>
-                  ) : (
-                    updatedFiles.map((file, idx) => {
-                      const isNew = file.startsWith("[NEW]");
-                      return (
-                        <div key={idx} className="flex gap-2 leading-relaxed">
-                          <span className={isNew ? "text-[#4fc1ff]" : "text-[#ce9178]"}>
-                            {file.split(" ")[0]}
-                          </span>
-                          <span className="text-[#9cdcfe]">
-                            {file.split(" ").slice(1).join(" ")}
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+    <div className="studio-view settings-studio">
+      <WorkspaceHeader eyebrow="WORKSPACE / PREFERENCES" title="系统设置" description="让工作空间按照你的习惯运行。" />
+      <div className="settings-layout"><nav className="settings-navigation" aria-label="设置分类">
+        <button aria-pressed={activeSection === 'general'} onClick={() => setActiveSection('general')}><strong>常规与阅读</strong><span>网络代理与默认翻页</span></button>
+        <button aria-pressed={activeSection === 'security'} onClick={() => setActiveSection('security')}><strong>账号与安全</strong><span>Passkey 与身份认证</span></button>
+        <button aria-pressed={activeSection === 'sync'} onClick={() => setActiveSection('sync')}><strong>内容同步</strong><span>更新上游订阅内容</span></button>
+        <button aria-pressed={activeSection === 'version'} onClick={() => setActiveSection('version')}><strong>版本与维护</strong><span>查看版本、更新程序</span></button>
+        <div className="settings-nav-note"><ShieldCheck size={18} /><p>配置由管理员管理。更改后请在相应面板保存。</p></div>
+      </nav><div className="settings-panels">
+        <div hidden={activeSection !== 'general'} aria-label="常规与阅读"><section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
           <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
             <div>
               <h3 className="font-semibold text-lg text-on-surface">系统与画面配置</h3>
@@ -347,9 +233,63 @@ export default function SettingsView() {
               </button>
             </div>
           </form>
-        </section>
-
-        <section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+        </section></div>
+        <div hidden={activeSection !== 'security'} aria-label="账号与安全"><section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+          <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
+            <div>
+              <h3 className="font-semibold text-lg text-on-surface">Passkey 身份认证</h3>
+              <p className="text-xs text-secondary mt-1">使用生物识别或硬件密钥安全登录，无需输入密码。</p>
+            </div>
+            <Fingerprint className="text-primary" size={24} />
+          </div>
+          <div className="p-8 space-y-6">
+            {loading ? (
+              <div className="text-center py-4 text-secondary">加载中...</div>
+            ) : (
+              <div className="space-y-4">
+                {passkeys.length === 0 ? (
+                  <div className="bg-surface-container-low p-4 rounded-lg text-center border border-dashed border-outline-variant">
+                    <p className="text-sm text-secondary">尚未注册任何 Passkey</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-outline-variant">
+                    {passkeys.map((pk) => (
+                      <div key={pk.id} className="py-3 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <ShieldCheck className="text-primary" size={20} />
+                          <div>
+                            <p className="text-sm font-medium">{pk.name}</p>
+                            <p className="text-xs text-secondary">注册于 {formatDate(pk.created_at)}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDelete(pk.id)}
+                          className="text-xs text-error hover:underline"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={handleRegister}
+                  className="w-full flex items-center justify-center gap-2 bg-primary text-on-primary py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-all shadow-sm"
+                >
+                  <Plus size={18} />
+                  注册新 Passkey
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="px-8 py-4 bg-surface border-t border-outline-variant">
+            <div className="text-xs text-secondary flex items-start gap-2">
+              <Info className="mt-0.5 shrink-0" size={16} />
+              建议在常用的设备上注册 Passkey，以获得更便捷的登录体验。
+            </div>
+          </div>
+        </section></div>
+        <div hidden={activeSection !== 'sync'} aria-label="内容同步"><section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
           <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright">
             <h3 className="font-semibold text-lg text-on-surface">系统同步</h3>
           </div>
@@ -359,7 +299,7 @@ export default function SettingsView() {
                 <p className="text-sm font-semibold">手动触发全局同步</p>
                 <p className="text-xs text-secondary">立即从所有上游订阅源更新数据</p>
               </div>
-              <button 
+              <button
                 onClick={handleSyncAll}
                 disabled={syncingAll}
                 className="bg-surface-container-high px-4 py-2 rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors flex items-center gap-2 disabled:opacity-50"
@@ -369,8 +309,69 @@ export default function SettingsView() {
               </button>
             </div>
           </div>
-        </section>
-      </div>
+        </section></div>
+        <div hidden={activeSection !== 'version'} aria-label="版本与维护"><section className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
+          <div className="px-8 py-5 border-b border-outline-variant bg-surface-bright flex justify-between items-center">
+            <div>
+              <h3 className="font-semibold text-lg text-on-surface">系统版本与更新</h3>
+              <p className="text-xs text-secondary mt-1">管理系统版本并获取最新功能。</p>
+            </div>
+            <Package className="text-primary" size={24} />
+          </div>
+          <div className="p-8 space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold">当前版本：v{versionInfo?.current || '1.0.0'}</p>
+                <p className="text-xs text-secondary mt-1">
+                  {versionInfo?.hasUpdate
+                    ? `发现新版本 v${versionInfo.latest}，建议立即升级。`
+                    : '已是最新版本。若有新提交，也可通过右侧按钮强制拉取主线最新代码进行升级。'}
+                </p>
+              </div>
+              <button
+                onClick={handleUpdate}
+                disabled={isUpdating}
+                className="bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={isUpdating ? 'animate-spin' : ''} />
+                {isUpdating ? '正在更新...' : versionInfo?.hasUpdate ? '立即升级' : '强制在线更新'}
+              </button>
+            </div>
+
+            {updatedFiles && (
+              <div className="mt-4 border border-outline-variant bg-[#1e1e1e] text-[#d4d4d4] font-mono text-xs rounded-lg overflow-hidden shadow-inner">
+                <div className="bg-[#2d2d2d] px-4 py-2 border-b border-[#3c3c3c] flex justify-between items-center text-[#9b9b9b]">
+                  <span>已更新文件列表 ({updatedFiles.length} 个项目)</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]" />
+                  </span>
+                </div>
+                <div className="p-4 max-h-60 overflow-y-auto space-y-1 scrollbar-thin">
+                  {updatedFiles.length === 0 ? (
+                    <div className="text-[#858585] text-center py-2">所有代码文件均已是最新，无文件发生实际变更。</div>
+                  ) : (
+                    updatedFiles.map((file, idx) => {
+                      const isNew = file.startsWith("[NEW]");
+                      return (
+                        <div key={idx} className="flex gap-2 leading-relaxed">
+                          <span className={isNew ? "text-[#4fc1ff]" : "text-[#ce9178]"}>
+                            {file.split(" ")[0]}
+                          </span>
+                          <span className="text-[#9cdcfe]">
+                            {file.split(" ").slice(1).join(" ")}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </section></div>
+      </div></div>
     </div>
   );
 }

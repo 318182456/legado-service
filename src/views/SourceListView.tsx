@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw, Search, Zap, ShieldCheck, Upload, BookOpen, CheckCircle2, AlertCircle, MoreVertical, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import * as api from '../api';
 import { useLatestRequest } from '../hooks/useLatestRequest';
-import { StatCard } from '../components/StatCard';
+import { WorkspaceHeader, WorkspaceTabs, WorkspaceSearch } from '../components/Workspace';
 
 interface SourceListViewProps {
   onImport: () => void;
@@ -24,7 +24,6 @@ export default function SourceListView({
   const [stats, setStats] = useState({ total: 0, available: 0, unavailable: 0, unchecked: 0 });
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [cleaning, setCleaning] = useState(false);
   const [checkDepth, setCheckDepth] = useState<api.SourceCheckDepth>(() => localStorage.getItem('legado_check_depth') === 'search' ? 'search' : 'content');
@@ -39,7 +38,6 @@ export default function SourceListView({
       setTotalPages(data.totalPages);
       setStats(data.stats);
       setPage(data.page);
-      setActiveMenu(null);
       setSelectedIds(prev => new Set([...prev].filter(id => data.sources.some(s => s.id === id))));
     });
 
@@ -112,7 +110,6 @@ export default function SourceListView({
     try {
       await api.deleteSource(id);
       await fetchSources(query, page, filter, excludeDuplicate);
-      setActiveMenu(null);
     } catch (e) {
       alert('删除失败: ' + String(e));
     }
@@ -121,158 +118,26 @@ export default function SourceListView({
   const handleCopyUrl = (url: string) => {
     navigator.clipboard.writeText(url);
     alert('已复制到剪贴板');
-    setActiveMenu(null);
   };
 
 
   return (
-    <div className="space-y-4">
-        <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">书源管理</h2>
-            <p className="text-sm text-secondary mt-1">管理并配置您的所有阅读源站点。</p>
-          </div>
-          <div className="view-toolbar flex w-full md:w-auto items-center gap-2 flex-wrap">
-            <select aria-label="检测深度" value={checkDepth} disabled={isTestingAll || testingIds.size > 0}
-              onChange={e => { const depth = e.target.value as api.SourceCheckDepth; setCheckDepth(depth); localStorage.setItem('legado_check_depth', depth); }}
-              className="bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 text-xs">
-              <option value="search">快速检测：搜索</option>
-              <option value="content">完整检测：搜索、目录、正文</option>
-            </select>
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-primary transition-all cursor-pointer"
-            >
-              <option value="all">全部书源</option>
-              <option value="available">已验证通过</option>
-              <option value="unavailable">仅看不可用</option>
-              <option value="skipped">待确认</option>
-              <option value="unchecked">未检测 / 待复检</option>
-              <option value="need_login">带登录配置</option>
-            </select>
-
-            <label className="flex items-center gap-1.5 text-xs font-bold bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-1.5 select-none cursor-pointer hover:bg-surface-container-low transition-colors shrink-0">
-              <input
-                type="checkbox"
-                checked={excludeDuplicate}
-                onChange={(e) => {
-                  const val = e.target.checked;
-                  setExcludeDuplicate(val);
-                  localStorage.setItem('legado_exclude_duplicate', String(val));
-                }}
-                className="rounded border-outline text-primary focus:ring-primary h-3.5 w-3.5 cursor-pointer"
-              />
-              排除重复
-            </label>
-
-            <div className="relative flex-1 md:w-48">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" size={14} />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索..."
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg pl-9 pr-4 py-1.5 text-xs outline-none focus:border-primary transition-all"
-              />
-            </div>
-
-          {selectedIds.size > 0 && (
-            <button
-              disabled={loading || isTestingAll || [...selectedIds].some(id => testingIds.has(id))}
-              onClick={() => handleLocalTest(Array.from(selectedIds))}
-              className="bg-tertiary text-on-tertiary px-3 py-1.5 rounded-lg text-xs font-bold hover:opacity-90 flex items-center gap-1.5"
-            >
-              <Zap size={14} /> 测试选中 ({selectedIds.size})
-            </button>
-          )}
-
-          <button
-            onClick={handleLocalTestAll}
-            disabled={cleaning || (loading && testingIds.size > 0 && !isTestingAll)}
-            className={`border border-outline-variant bg-surface-container-low text-on-surface px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-surface-container-high flex items-center gap-1.5 disabled:opacity-50 relative overflow-hidden transition-all ${isTestingAll || cleaning ? 'ring-1 ring-primary/30' : ''}`}
-            title="对所有书源可用性进行并发测试，并在完成后自动标记禁用重复和失效项"
-          >
-            {cleaning ? (
-              <Sparkles size={14} className="animate-spin text-primary" />
-            ) : (
-              <ShieldCheck size={14} className={isTestingAll ? 'animate-pulse text-primary' : ''} />
-            )}
-            {isTestingAll ? (
-              `停止测试 (${testProgress.current}/${testProgress.total})`
-            ) : cleaning ? (
-              '自动去重标记中...'
-            ) : (
-              '全部测试 (含去重)'
-            )}
-            {isTestingAll && testProgress.total > 0 && (
-              <div
-                className="absolute bottom-0 left-0 h-0.5 bg-primary transition-all duration-500 ease-out"
-                style={{ width: `${(testProgress.current / testProgress.total) * 100}%` }}
-              />
-            )}
-          </button>
-
-          <button
-            onClick={async () => {
-              if (confirm('确定要清空所有书源吗？此操作不可撤销！')) {
-                try {
-                  await api.deleteAllSources();
-                  fetchSources(query, 1, filter, excludeDuplicate);
-                } catch (e) {
-                  alert('删除失败: ' + String(e));
-                }
-              }
-            }}
-            className="p-1.5 border border-error/30 rounded-lg bg-error/5 text-error hover:bg-error/10 transition-colors"
-            title="清空所有书源"
-          >
-            <Trash2 size={16} />
-          </button>
-
-          <button
-            onClick={() => fetchSources(query, page, filter, excludeDuplicate)}
-            title="刷新列表"
-            className="p-1.5 border border-outline-variant rounded-lg bg-surface-container-lowest hover:bg-surface-container-low transition-colors"
-          >
-            <RefreshCw size={16} className={loading && testingIds.size === 0 ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={onImport}
-            className="bg-primary text-on-primary px-4 py-1.5 rounded-lg text-xs font-bold hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
-          >
-            <Upload size={16} /> 导入书源
-          </button>
-        </div>
+    <div className="studio-view sources-workbench">
+      <WorkspaceHeader eyebrow="CONTENT / SOURCES" title="书源工作台" description="查找、验证和整理书源，让每次阅读都有可靠的来源。"
+        actions={<><button className="button-secondary" onClick={() => fetchSources(query, page, filter, excludeDuplicate)} disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />刷新</button><button className="button-primary" onClick={onImport}><Upload size={16} />导入书源</button></>} />
+      <div className="source-health" aria-label="书源检测概况">
+        {[{id:'all',label:'书源总数',value:stats.total,icon:BookOpen,detail:'所有已收录的书源'}, {id:'available',label:'已验证通过',value:stats.available,icon:CheckCircle2,detail:'通过原书源规则检测'}, {id:'unavailable',label:'确认不可用',value:stats.unavailable,icon:AlertCircle,detail:'检测失败或需要登录'}, {id:'unchecked',label:'待检测与确认',value:stats.unchecked || 0,icon:ShieldCheck,detail:'等待验证的内容来源'}].map(item => <button key={item.id} onClick={() => setFilter(item.id)} aria-pressed={filter === item.id} className={`health-item health-${item.id}`}><span><item.icon size={17} />{item.label}</span><strong>{item.value.toLocaleString()}</strong><small>{item.detail}</small></button>)}
       </div>
-
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
-          <StatCard
-            icon={<BookOpen size={24} />}
-            label="总书源"
-            value={stats.total.toLocaleString()}
-            color="bg-primary/10 text-primary"
-          />
-          <StatCard
-            icon={<CheckCircle2 size={24} />}
-            label="已验证通过"
-            value={stats.available.toLocaleString()}
-            color="bg-green-500/10 text-green-600"
-          />
-          <div className="relative">
-            <StatCard
-              icon={<AlertCircle size={24} />}
-              label="确认不可用"
-              value={stats.unavailable.toLocaleString()}
-              color="bg-error/10 text-error"
-            />
-          </div>
-          <StatCard icon={<AlertCircle size={24} />} label="待检测 / 待确认" value={(stats.unchecked || 0).toLocaleString()} color="bg-secondary/10 text-secondary" />
-        </div>
-
-
-      <p className="text-xs text-secondary">完整检测由 reader 执行原书源规则并试读免费章节；带登录配置或要求登录的书源直接禁用。验证、限流和暂时网络错误保留为待确认。</p>
+      <div className="source-test-panel">
+        <span className="test-panel-icon"><ShieldCheck size={24} /></span><div className="test-panel-description"><strong>{isTestingAll ? '书源检测正在进行' : cleaning ? '正在整理检测结果' : '检查你的书源库'}</strong><p>快速检测搜索结果，或完整验证目录与免费正文。需登录的书源会禁用。</p></div>
+        <select aria-label="检测深度" value={checkDepth} disabled={isTestingAll || testingIds.size > 0} onChange={event => { const depth = event.target.value as api.SourceCheckDepth; setCheckDepth(depth); localStorage.setItem('legado_check_depth', depth); }}><option value="search">快速检测 · 搜索</option><option value="content">完整检测 · 搜索与正文</option></select>
+        <button className="button-primary" onClick={handleLocalTestAll} disabled={cleaning || (loading && testingIds.size > 0 && !isTestingAll)}><Zap size={15} />{isTestingAll ? `停止检测 ${testProgress.current}/${testProgress.total}` : cleaning ? '整理中…' : '检测全部书源'}</button>
+        {isTestingAll && testProgress.total > 0 && <div className="test-panel-progress" role="progressbar" aria-label="全库检测进度" aria-valuenow={testProgress.current} aria-valuemin={0} aria-valuemax={testProgress.total}><span style={{width:`${testProgress.current / testProgress.total * 100}%`}} /></div>}
+      </div>
+      <section className="studio-collection">
+        <WorkspaceTabs label="书源筛选" value={filter} onChange={setFilter} items={[{id:'all',label:'全部书源'},{id:'available',label:'验证通过'},{id:'unavailable',label:'不可用'},{id:'skipped',label:'待确认'},{id:'unchecked',label:'未检测'},{id:'need_login',label:'带登录配置'}]} />
+        <div className="collection-toolbar"><WorkspaceSearch value={query} onChange={setQuery} label="搜索书源" placeholder="搜索书源名称、地址或分组" /><label className="duplicate-filter"><input type="checkbox" checked={excludeDuplicate} onChange={event => {setExcludeDuplicate(event.target.checked);localStorage.setItem('legado_exclude_duplicate',String(event.target.checked));}} />排除重复</label><details className="collection-more"><summary>更多操作</summary><button className="text-error" onClick={async () => {if(confirm('确定要清空所有书源吗？此操作不可撤销！')) {try {await api.deleteAllSources();fetchSources(query,1,filter,excludeDuplicate);}catch(error){alert('删除失败: '+String(error));}}}}>清空所有书源</button></details></div>
+        {selectedIds.size > 0 && <div className="source-selection" role="status"><strong>已选 {selectedIds.size} 个书源</strong><button onClick={() => handleLocalTest(Array.from(selectedIds))} disabled={loading || isTestingAll || [...selectedIds].some(id => testingIds.has(id))}><Zap size={14} />检测选中</button><button onClick={() => setSelectedIds(new Set())}>取消选择</button></div>}
       {error && (
         <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-error/30 bg-error/5 p-3 text-sm text-error">
           <span>加载失败：{error}</span>
@@ -281,8 +146,17 @@ export default function SourceListView({
       )}
       {loading && <div role="status" className="text-xs text-secondary">正在加载…</div>}
 
-      <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto min-h-[400px]">
+      <div className="source-results">
+        <div className="source-mobile-list">
+          <label className="mobile-select-all"><input type="checkbox" checked={selectedIds.size === sources.length && sources.length > 0} onChange={toggleAll} />选择本页书源</label>
+          {sources.length === 0 ? <p className="studio-loading">{loading ? '正在加载…' : '没有匹配的书源'}</p> : sources.map(source => <article className="source-mobile-card" key={source.id}>
+            <div><input type="checkbox" aria-label={`选择书源：${source.name}`} checked={selectedIds.has(source.id)} onChange={() => toggleOne(source.id)} /><h3>{source.name}</h3><button className={`status-badge ${source.enabled ? 'is-enabled' : ''}`} onClick={() => handleToggleSource(source.id,!!source.enabled)}>{source.enabled ? '已启用' : '已禁用'}</button></div>
+            <p>{source.book_source_url}</p><span className="source-group">{source.group_name || '未分组'}</span>
+            <div className="source-mobile-status"><span className={source.check_verdict === 'unavailable' ? 'text-error' : 'text-secondary'}>{testingIds.has(source.id) ? '检测中…' : source.check_verdict === 'available' ? '验证通过' : source.check_reason === 'login-required' || source.check_reason === 'login-redirect' ? '需登录（已禁用）' : source.check_verdict === 'unavailable' ? '不可用' : source.check_verdict === 'skipped' ? '待确认' : '待验证'}</span><small>{source.check_detail}</small></div>
+            <div className="table-row-actions"><button onClick={() => handleLocalTest([source.id])} disabled={isTestingAll || testingIds.has(source.id)}><Zap size={14} />检测</button><button onClick={() => handleCopyUrl(source.book_source_url)}><Copy size={14} />复制</button><button className="danger" onClick={() => handleDeleteSource(source.id)} aria-label={`删除书源：${source.name}`}><Trash2 size={14} /></button></div>
+          </article>)}
+        </div>
+        <div className="sources-table-desktop overflow-x-auto min-h-[300px]">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-surface text-secondary text-xs font-bold uppercase tracking-wider border-b border-outline-variant">
@@ -346,49 +220,14 @@ export default function SourceListView({
                         {testingIds.has(source.id) ? (
                           <span className="text-[11px] text-tertiary animate-pulse font-bold">测试中...</span>
                         ) : (
-                          <span title={source.check_detail || '重新检测后显示具体结果'} className={`text-[11px] font-bold ${source.check_verdict === 'available' ? 'text-green-500' : source.check_verdict === 'unavailable' ? 'text-error' : 'text-secondary'}`}>
+                          <span title={source.check_detail || '重新检测后显示具体结果'} className={`text-[11px] font-bold ${source.check_verdict === 'available' ? 'text-green-700' : source.check_verdict === 'unavailable' ? 'text-error' : 'text-secondary'}`}>
                             {source.check_verdict === 'available' ? '通过' : source.check_reason === 'login-required' || source.check_reason === 'login-redirect' ? '需登录（已禁用）' : source.check_verdict === 'unavailable' ? '不可用' : source.check_verdict === 'skipped' ? '待确认' : source.last_checked ? '待复检' : '未检测'}
                           </span>
                         )}
                         {source.check_detail && <span className="text-[10px] text-secondary max-w-[220px] truncate" title={source.check_detail}>{source.check_detail}</span>}
                       </div>
                     </td>
-                    <td className="py-2 px-4 text-right relative">
-                      <button
-                        aria-label={`书源操作：${source.name}`}
-                        onClick={() => setActiveMenu(activeMenu === source.id ? null : source.id)}
-                        className="p-1 text-secondary hover:text-primary transition-colors"
-                      >
-                        <MoreVertical size={18} />
-                      </button>
-
-                      {activeMenu === source.id && (
-                        <>
-                          <div className="fixed inset-0 z-10" onClick={() => setActiveMenu(null)} />
-                          <div className="absolute right-6 top-10 w-32 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-xl z-20 py-1 overflow-hidden text-left">
-                            <button
-                              disabled={isTestingAll || testingIds.has(source.id)}
-                              onClick={() => { handleLocalTest([source.id]); setActiveMenu(null); }}
-                              className="w-full text-left px-4 py-2 text-xs hover:bg-surface-container-low transition-colors flex items-center gap-2"
-                            >
-                              <Zap size={14} /> 立即测试
-                            </button>
-                            <button
-                              onClick={() => handleCopyUrl(source.book_source_url)}
-                              className="w-full text-left px-4 py-2 text-xs hover:bg-surface-container-low transition-colors flex items-center gap-2"
-                            >
-                              <Copy size={14} /> 复制 URL
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSource(source.id)}
-                              className="w-full text-left px-4 py-2 text-xs hover:bg-error-container/20 text-error transition-colors flex items-center gap-2 border-t border-outline-variant/30 mt-1"
-                            >
-                              <Trash2 size={14} /> 删除
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </td>
+                    <td className="py-2 px-4 text-right"><div className="table-row-actions"><button aria-label={`检测书源：${source.name}`} onClick={() => handleLocalTest([source.id])} disabled={isTestingAll || testingIds.has(source.id)}><Zap size={15} /></button><button aria-label={`复制书源地址：${source.name}`} onClick={() => handleCopyUrl(source.book_source_url)}><Copy size={15} /></button><button aria-label={`删除书源：${source.name}`} className="danger" onClick={() => handleDeleteSource(source.id)}><Trash2 size={15} /></button></div></td>
                   </tr>
                 ))
               )}
@@ -429,6 +268,7 @@ export default function SourceListView({
           </div>
         </div>
       </div>
+      </section>
     </div>
   );
 }

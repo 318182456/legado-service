@@ -6,6 +6,8 @@ import {
   ChevronRight,
   X,
   ArrowUpRight,
+  Search,
+  Plus,
   Menu,
   LogOut,
   Sparkles,
@@ -59,11 +61,13 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [navigationQuery, setNavigationQuery] = useState('');
   const sidebarRef = React.useRef<HTMLElement>(null);
   const reduceMotion = useReducedMotion();
   const currentPage = navigation.find(item => item.id === activeTab) ?? navigation[0];
   const navigate = (tab: string) => {
     setActiveTab(tab);
+    setNavigationQuery('');
     setMobileNavOpen(false);
   };
 
@@ -373,15 +377,17 @@ export default function App() {
           <div className="sidebar-brand-copy"><strong>Legado <span>Hub</span></strong><small>你的阅读工作空间</small></div>
           <button className="mobile-nav-close" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航"><X size={20} /></button>
         </div>
+        <div className="sidebar-finder"><Search size={15} /><input aria-label="查找功能" placeholder="查找功能…" value={navigationQuery} onChange={event => setNavigationQuery(event.target.value)} /></div>
         <nav className="sidebar-nav" aria-label="工作空间页面">
-          {['工作空间', '阅读工具', '管理'].map(group => (
+          {['工作空间', '阅读工具', '管理'].filter(group => navigation.some(item => item.group === group && item.label.includes(navigationQuery))).map(group => (
             <div className="nav-group" key={group}>
               <p className="nav-group-title">{group}</p>
-              {navigation.filter(item => item.group === group).map(item => (
+              {navigation.filter(item => item.group === group && item.label.includes(navigationQuery)).map(item => (
                 <React.Fragment key={item.id}><NavItem active={activeTab === item.id} onClick={() => navigate(item.id)} icon={<item.icon size={18} strokeWidth={1.7} />} label={item.label} collapsed={!isSidebarOpen} /></React.Fragment>
               ))}
             </div>
           ))}
+          {!navigation.some(item => item.label.includes(navigationQuery)) && <p className="sidebar-no-results">没有匹配的功能</p>}
         </nav>
         <div className="sidebar-bottom">
           <a href="/reader3/" target="_blank" rel="noopener noreferrer" className="sidebar-reader" title="打开在线阅读器">
@@ -413,6 +419,7 @@ export default function App() {
                 {isUpdating ? '正在更新…' : `更新至 v${versionInfo.latest}`}
               </button>
             )}
+            <button className="header-quick-import" onClick={() => setIsJsonImportModalOpen(true)}><Plus size={14} />快速导入</button>
             <span className="version-badge">{versionInfo?.current ? `v${versionInfo.current}` : 'Legado Hub'}</span>
           </div>
         </header>

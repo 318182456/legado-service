@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Plus, Search, Globe, ListRestart, Sparkles, Trash2, Book } from 'lucide-react';
 import * as api from '../api';
+import { WorkspaceHeader, WorkspaceTabs, WorkspaceSearch, WorkspaceEmpty } from '../components/Workspace';
 
 interface SubscriptionViewProps {
   onImport: () => void;
@@ -30,15 +31,19 @@ const formatDate = (dateInput: string | number | Date) => {
 export default function SubscriptionView({ onImport, onExplore, onJsonImport }: SubscriptionViewProps) {
   const [subs, setSubs] = useState<api.Subscription[]>([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('all');
+  const [error, setError] = useState('');
   const [syncing, setSyncing] = useState<number | null>(null);
 
   const fetchSubs = async () => {
     setLoading(true);
+    setError('');
     try {
       const list = await api.getSubscriptions();
       setSubs(list);
     } catch (e) {
-      console.error('获取订阅失败', e);
+      setError('暂时无法加载订阅，请重试。');
     } finally {
       setLoading(false);
     }
@@ -82,126 +87,37 @@ export default function SubscriptionView({ onImport, onExplore, onJsonImport }: 
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin text-primary" size={32} />
-      </div>
-    );
-  }
+  const types = [
+    { id: 'all', label: '全部订阅' }, { id: 'source', label: '书源' },
+    { id: 'rule', label: '净化规则' }, { id: 'txtTocRule', label: '目录' }, { id: 'dictRule', label: '字典' },
+  ];
+  const visible = subs.filter(sub => (category === 'all' || sub.type === category)
+    && `${sub.name} ${sub.url}`.toLowerCase().includes(query.toLowerCase()));
 
   return (
-    <div className="space-y-6">
-      <div className="page-heading flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">订阅管理</h2>
-          <p className="text-sm text-secondary mt-1">配置第三方订阅链接，自动保持书源和规则同步。</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={onExplore}
-            className="flex items-center gap-2 px-4 py-2 bg-tertiary text-on-tertiary rounded-lg text-sm font-bold hover:opacity-90 transition-all shadow-sm"
-          >
-            <Sparkles size={18} />
-            从网页导入数据
-          </button>
-          <button 
-            onClick={onJsonImport}
-            className="flex items-center gap-2 px-4 py-2 bg-secondary text-on-secondary rounded-lg text-sm font-bold hover:opacity-90 transition-all shadow-sm"
-          >
-            <Plus size={18} />
-            智能 JSON 导入
-          </button>
-          <button 
-            onClick={onImport}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-bold hover:opacity-90 transition-all shadow-sm"
-          >
-            <Plus size={18} />
-            添加订阅 URL
-          </button>
-        </div>
+    <div className="studio-view">
+      <WorkspaceHeader eyebrow="CONTENT / SUBSCRIPTIONS" title="订阅管理"
+        description="连接你的内容来源。一次添加，持续同步。"
+        actions={<><button className="button-secondary" onClick={onJsonImport}>导入 JSON</button><button className="button-primary" onClick={onImport}><Plus size={16} />添加订阅</button></>} />
+      <div className="subscription-overview">
+        <div><span>订阅库</span><strong>{subs.length}<small>个订阅</small></strong></div>
+        <div><span>正在启用</span><strong>{subs.filter(s => s.enabled).length}<small>个来源</small></strong></div>
+        <div><span>包含项目</span><strong>{subs.reduce((sum, sub) => sum + (sub.item_count || 0), 0).toLocaleString()}<small>条内容</small></strong></div>
+        <button onClick={onExplore}><Globe size={22} /><span><strong>发现新的内容来源</strong><small>从网页解析并导入订阅</small></span><Plus size={18} /></button>
       </div>
-
-      <div className="grid grid-cols-1 gap-4">
-        {subs.length === 0 ? (
-          <div className="bg-surface-container-lowest border border-outline-variant border-dashed rounded-xl p-12 text-center">
-            <Globe className="mx-auto text-secondary mb-4" size={48} />
-            <p className="text-secondary">尚未添加任何订阅 URL</p>
-          </div>
-        ) : (
-          subs.map((sub) => (
-            <div key={sub.id} className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm flex items-center justify-between group subscription-row">
-              <div className="flex items-center gap-4 flex-1 min-w-0">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${
-                  sub.type === 'source' 
-                    ? 'bg-primary-container/20 text-primary' 
-                    : sub.type === 'rule'
-                      ? 'bg-tertiary-container/20 text-tertiary'
-                      : sub.type === 'txtTocRule'
-                        ? 'bg-secondary-container/20 text-secondary'
-                        : 'bg-success-container/20 text-success'
-                }`}>
-                  {sub.type === 'source' 
-                    ? <ListRestart size={24} /> 
-                    : sub.type === 'rule'
-                      ? <Sparkles size={24} />
-                      : sub.type === 'txtTocRule'
-                        ? <ListRestart size={24} />
-                        : <Globe size={24} />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-bold truncate">{sub.name || '未命名订阅'}</h4>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                      sub.type === 'source'
-                        ? 'bg-primary text-on-primary'
-                        : sub.type === 'rule'
-                          ? 'bg-tertiary text-on-tertiary'
-                          : sub.type === 'txtTocRule'
-                            ? 'bg-secondary text-on-secondary'
-                            : 'bg-success text-on-success'
-                    }`}>
-                      {sub.type === 'source' ? '书源' : sub.type === 'rule' ? '规则' : sub.type === 'txtTocRule' ? '目录' : '字典'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-secondary truncate font-mono mt-1">{sub.url}</p>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-secondary font-medium">
-                    <span className="flex items-center gap-1"><Book size={12} /> {sub.item_count} 条项目</span>
-                    <span className="flex items-center gap-1"><RefreshCw size={12} /> {sub.last_synced ? formatDate(sub.last_synced) : '从未同步'}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="subscription-row-actions flex items-center gap-3 ml-6">
-                <button 
-                  onClick={() => handleToggle(sub.id, !!sub.enabled)}
-                  className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${sub.enabled ? 'bg-primary' : 'bg-secondary-container'}`}
-                >
-                  <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out mt-0.5 ml-0.5 ${sub.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                </button>
-                
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                  <button 
-                    onClick={() => handleSync(sub.id)}
-                    disabled={syncing === sub.id}
-                    title="立即同步"
-                    className="p-2 text-secondary hover:text-primary hover:bg-surface-container rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    <RefreshCw size={18} className={syncing === sub.id ? 'animate-spin' : ''} />
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(sub.id)}
-                    title="删除"
-                    className="p-2 text-secondary hover:text-error hover:bg-error-container/20 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+      <section className="studio-collection">
+        <WorkspaceTabs label="订阅类型" items={types.map(type => ({ ...type, count: subs.filter(s => type.id === 'all' || s.type === type.id).length }))} value={category} onChange={setCategory} />
+        <div className="collection-toolbar"><WorkspaceSearch value={query} onChange={setQuery} label="搜索订阅" placeholder="搜索订阅名称或链接" /><span>{visible.length} 个订阅</span><button className="button-secondary" onClick={fetchSubs} disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />刷新</button></div>
+        {error && <div role="alert" className="notice-error">{error}<button onClick={fetchSubs}>重试</button></div>}
+        {loading ? <div className="studio-loading" role="status"><RefreshCw className="animate-spin" size={22} />正在加载订阅…</div> : visible.length === 0 ?
+          <WorkspaceEmpty icon={<ListRestart size={28} />} title={query || category !== 'all' ? '没有匹配的订阅' : '建立你的第一份订阅'} description={query ? '试试其他名称，或清除搜索条件。' : '添加一个订阅地址，将书源和规则集中管理。'} action={query ? '清除搜索' : '添加订阅'} onAction={query ? () => setQuery('') : onImport} /> :
+          <div className="subscription-grid">{visible.map(sub => <article key={sub.id} className="subscription-tile">
+            <div className="subscription-tile-top"><span className={`tile-icon type-${sub.type}`}>{sub.type === 'source' ? <Book size={23} /> : sub.type === 'rule' ? <Sparkles size={23} /> : <Globe size={23} />}</span><span className="type-label">{types.find(type => type.id === sub.type)?.label}</span><span className={`status-badge ${sub.enabled ? 'is-enabled' : ''}`}><span />{sub.enabled ? '已启用' : '已暂停'}</span></div>
+            <h3>{sub.name || '未命名订阅'}</h3><p className="subscription-tile-url" title={sub.url}>{sub.url}</p>
+            <div className="subscription-tile-meta"><div><span>包含内容</span><strong>{(sub.item_count || 0).toLocaleString()} <small>条</small></strong></div><div><span>上次同步</span><strong className="sync-date">{sub.last_synced ? formatDate(sub.last_synced) : '尚未同步'}</strong></div></div>
+            <div className="subscription-tile-footer"><button className="tile-switch" role="switch" aria-checked={!!sub.enabled} aria-label={`启用订阅：${sub.name}`} onClick={() => handleToggle(sub.id, !!sub.enabled)}><span /><small>{sub.enabled ? '同步已开启' : '同步已暂停'}</small></button><button className="tile-icon-button danger" aria-label={`删除订阅：${sub.name}`} onClick={() => handleDelete(sub.id)}><Trash2 size={16} /></button><button className="tile-sync" onClick={() => handleSync(sub.id)} disabled={syncing !== null}><RefreshCw size={14} className={syncing === sub.id ? 'animate-spin' : ''} />{syncing === sub.id ? '同步中' : '立即同步'}</button></div>
+          </article>)}</div>}
+      </section>
     </div>
   );
 }

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Search, RefreshCw, Package, Book, Sparkles, Copy, X, Folder, 
-  ChevronRight, Home, Trash2, Image as ImageIcon, Type, 
+import {
+  Search, RefreshCw, Package, Book, Sparkles, Copy, X, Folder,
+  ChevronRight, Home, Trash2, Image as ImageIcon, Type,
   FileText, Download, Maximize2, Palette, LayoutGrid, List,
   ArrowUpDown, Filter, Plus
 } from 'lucide-react';
 import * as api from '../api';
+import { WorkspaceHeader, WorkspaceTabs, WorkspaceSearch } from '../components/Workspace';
 
 import { PreviewModal } from '../components/PreviewModal';
 import { FontPreview } from '../components/FontPreview';
@@ -43,14 +44,14 @@ export default function AssetsView() {
 
   const handlePaletteClick = (item: any) => {
     if (isImage(item.path)) {
-      setSandboxConfig({ 
-        base: item, 
-        type: 'bg' 
+      setSandboxConfig({
+        base: item,
+        type: 'bg'
       });
     } else {
-      setSandboxConfig({ 
-        base: item, 
-        type: item.extension === 'zip' ? 'zip' : (item.category === 'fonts' ? 'font' : 'theme') 
+      setSandboxConfig({
+        base: item,
+        type: item.extension === 'zip' ? 'zip' : (item.category === 'fonts' ? 'font' : 'theme')
       });
     }
   };
@@ -83,26 +84,26 @@ export default function AssetsView() {
   const fileTree = useMemo(() => {
     if (!data) return null;
     const root: any = { name: 'root', children: {}, type: 'folder', path: '' };
-    
+
     Object.entries(data).forEach(([category, items]: [string, any]) => {
       items.forEach((item: any) => {
         const parts = item.path.split('/');
         let current = root;
         parts.forEach((part: string, index: number) => {
           if (index === parts.length - 1) {
-            current.children[part] = { 
-              ...item, 
-              type: 'file', 
+            current.children[part] = {
+              ...item,
+              type: 'file',
               category,
               extension: part.split('.').pop()?.toLowerCase()
             };
           } else {
             if (!current.children[part]) {
-              current.children[part] = { 
-                name: part, 
-                type: 'folder', 
+              current.children[part] = {
+                name: part,
+                type: 'folder',
                 path: parts.slice(0, index + 1).join('/'),
-                children: {} 
+                children: {}
               };
             }
             current = current.children[part];
@@ -116,7 +117,7 @@ export default function AssetsView() {
   // 获取当前路径下的内容并进行过滤/排序
   const currentContent = useMemo(() => {
     if (!fileTree) return [];
-    
+
     let baseContent: any[] = [];
     if (query) {
       // 搜索模式：平铺展示，支持多关键字（空格分隔）
@@ -210,65 +211,25 @@ export default function AssetsView() {
   };
 
   const editTheme = (item: any) => {
-    setSandboxConfig({ 
-      base: item, 
-      type: 'saved' 
+    setSandboxConfig({
+      base: item,
+      type: 'saved'
     });
   };
 
+  const visibleThemes = customThemes.filter(theme => (theme.name || '').toLowerCase().includes(query.toLowerCase()));
   return (
-    <div className="space-y-6 pb-20 relative h-full flex flex-col">
-      <div className="page-heading flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant/30 pb-6 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight text-on-surface flex items-center gap-3">
-            <Package size={24} className="text-primary" /> 阅读资源
-          </h2>
-          <p className="text-sm text-secondary mt-1">
-            {viewMode === 'explorer' ? '浏览与管理云端 R2 存储的排版布局、字体及背景图片资源。' : '查看已保存到云端的精选定制主题。'}
-          </p>
-        </div>
-        <div className="asset-view-actions flex items-center gap-3">
-          <div className="bg-surface-container p-1 rounded-xl flex gap-1 shadow-inner">
-            <button 
-              onClick={() => setViewMode('explorer')}
-              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'explorer' ? 'bg-surface-bright shadow-md text-primary scale-105' : 'text-secondary hover:bg-surface-bright/50'}`}
-            >
-              资源浏览器
-            </button>
-            <button 
-              onClick={() => setViewMode('featured')}
-              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'featured' ? 'bg-surface-bright shadow-md text-primary scale-105' : 'text-secondary hover:bg-surface-bright/50'}`}
-            >
-              精选主题 ({customThemes.length})
-            </button>
-          </div>
-          <div className="asset-search relative w-72 flex items-center bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all overflow-hidden">
-            <Search className="ml-3 text-secondary shrink-0" size={16} />
-            <input 
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={searchInNameOnly ? "按文件名搜索..." : "按路径/名称搜索..."}
-              className="w-full bg-transparent pl-2 pr-4 py-2 text-sm outline-none"
-            />
-            <button 
-              onClick={() => setSearchInNameOnly(!searchInNameOnly)}
-              className={`px-2 py-1 mx-1 text-[10px] font-bold rounded-md transition-colors shrink-0 ${searchInNameOnly ? 'bg-primary/10 text-primary' : 'bg-surface-container text-secondary'}`}
-              title={searchInNameOnly ? "切换为全路径搜索" : "切换为仅文件名搜索"}
-            >
-              {searchInNameOnly ? '文件名' : '全路径'}
-            </button>
-          </div>
-          <button 
-            onClick={() => fetchAll(true)}
-            className="p-2.5 bg-surface-container-lowest border border-outline-variant text-primary rounded-xl hover:bg-surface-container-low transition-colors shadow-sm"
-            title="刷新数据"
-          >
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      </div>
-
+    <div className="studio-view assets-studio">
+      <WorkspaceHeader eyebrow="DESIGN / RESOURCE LIBRARY" title="阅读资源库" description="字体、背景与主题，组成你的阅读风格。"
+        actions={<><button className="button-secondary" onClick={() => fetchAll(true)} disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} />刷新资源</button><button className="button-primary" onClick={createBlankTheme}><Plus size={16} />创建主题</button></>} />
+      <WorkspaceTabs label="资源视图" value={viewMode} onChange={setViewMode} items={[{id:'explorer',label:'文件资源'},{id:'featured',label:'我的主题',count:customThemes.length}]} />
+      <div className="asset-library-layout"><aside className="asset-library-nav">
+        <p className="studio-eyebrow">资源分类</p>
+        {categories.map(category => <button key={category.id} aria-pressed={viewMode === 'explorer' && categoryFilter === category.id} onClick={() => {setViewMode('explorer');setCategoryFilter(category.id as any);}}>{category.icon}{category.label}</button>)}
+        <div className="asset-nav-folders"><p className="studio-eyebrow">文件夹</p><button onClick={() => {setViewMode('explorer');setCategoryFilter('all');navigateTo([]);}}><Home size={15} />全部文件</button>{Object.values(fileTree?.children || {}).filter((node:any) => node.type === 'folder').map((node:any) => <button key={node.path} onClick={() => {setViewMode('explorer');setCategoryFilter('all');navigateTo([node.name]);}}><Folder size={15} />{node.name}</button>)}</div>
+        <div className="asset-create-note"><Palette size={24} /><strong>打造你的阅读主题</strong><p>从空白开始，或在资源卡片中进入样式实验室。</p><button onClick={createBlankTheme}>开始设计<ArrowUpDown size={13} /></button></div>
+      </aside><div className="asset-main-pane">
+        <div className="collection-toolbar"><WorkspaceSearch value={query} onChange={setQuery} label="搜索资源" placeholder={viewMode === 'featured' ? '搜索主题名称' : searchInNameOnly ? '搜索文件名称' : '搜索资源路径或名称'} />{viewMode === 'explorer' && <button className="button-secondary" aria-pressed={searchInNameOnly} onClick={() => setSearchInNameOnly(value => !value)}>{searchInNameOnly ? '仅文件名' : '全路径'}</button>}</div>
       {viewMode === 'explorer' ? (
         <div className="flex-1 min-h-0 flex flex-col gap-4">
           {/* 工具栏: 面包屑 + 布局切换 + 排序 */}
@@ -283,39 +244,12 @@ export default function AssetsView() {
                 ))}
               </div>
             )}
-            
+
             <div className="asset-filter-toolbar flex flex-wrap items-center gap-3 ml-auto">
-              {/* 常用关键字标签 */}
-              <div className="hidden lg:flex items-center gap-2 mr-4">
-                 <span className="text-[10px] text-outline font-bold uppercase">常用标签:</span>
-                 {quickTags.map(tag => (
-                   <button 
-                     key={tag} 
-                     onClick={() => handleTagClick(tag)}
-                     className="px-2 py-0.5 bg-surface-container hover:bg-primary/10 hover:text-primary text-[10px] rounded transition-colors text-secondary font-medium"
-                   >
-                     {tag}
-                   </button>
-                 ))}
-              </div>
-
-              {/* 类型过滤标签 */}
-              <div className="flex flex-wrap bg-surface-container p-1 rounded-xl">
-                {categories.map(cat => (
-                  <button 
-                    key={cat.id} 
-                    onClick={() => setCategoryFilter(cat.id as any)}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${categoryFilter === cat.id ? 'bg-surface-bright shadow-sm text-primary' : 'text-secondary hover:text-on-surface'}`}
-                  >
-                    {cat.icon} {cat.label}
-                  </button>
-                ))}
-              </div>
-
               {/* 排序与布局切换 */}
               <div className="w-px h-8 bg-outline-variant/30 mx-1"></div>
-              
-              <button 
+
+              <button
                 onClick={() => setSortOrder(sortOrder === 'name' ? 'type' : 'name')}
                 className="p-2 text-secondary hover:bg-surface-container rounded-lg transition-colors flex items-center gap-2 text-xs font-bold"
                 title={sortOrder === 'name' ? '按类型排序' : '按名称排序'}
@@ -336,19 +270,19 @@ export default function AssetsView() {
             ) : currentContent.length === 0 ? (
               <div className="py-20 text-center text-secondary border border-dashed border-outline-variant rounded-2xl"><Package size={48} className="mx-auto mb-4 opacity-10" /><p>{query ? '未找到相关资源' : '该文件夹为空'}</p></div>
             ) : layoutType === 'grid' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="asset-file-grid">
                 {currentContent.map((item: any, idx: number) => {
                   const isFolder = item.type === 'folder';
                   const url = `${window.location.origin}/repo/${item.path}`;
                   const isImg = isImage(item.path);
-                  
+
                   return (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={idx}
                       onClick={() => {
                         if (isFolder) navigateTo([...currentPath, item.name]);
                         else if (['txt', 'zip', 'json'].includes(item.extension)) setPreviewItem({ ...item, url });
-                      }} 
+                      }}
                       className="group flex flex-col bg-surface-container-lowest border border-outline-variant rounded-xl p-3 transition-all hover:shadow-lg hover:border-primary/30 cursor-pointer"
                     >
                       <div className="relative aspect-video rounded-lg bg-surface-container overflow-hidden flex items-center justify-center mb-3">
@@ -430,11 +364,11 @@ export default function AssetsView() {
       ) : (
         /* 精选主题视图 */
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-2">
-          {customThemes.length === 0 ? (
+          {visibleThemes.length === 0 ? (
             <div className="py-20 text-center text-secondary border border-dashed border-outline-variant rounded-2xl flex flex-col items-center justify-center p-8 gap-4">
               <Sparkles size={48} className="opacity-10" />
-              <p>暂无精选主题。</p>
-              <button 
+              <p>{query ? '未找到匹配的主题。' : '还没有保存主题，创建你的第一套阅读风格。'}</p>
+              <button
                 onClick={createBlankTheme}
                 className="flex items-center gap-2 px-5 py-2.5 bg-primary text-on-primary rounded-xl text-xs font-bold hover:opacity-90 transition-all shadow-md"
               >
@@ -442,9 +376,9 @@ export default function AssetsView() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
+            <div className="asset-theme-grid">
               {/* 新建空白主题卡片 */}
-              <motion.div 
+              <motion.div
                 layout
                 onClick={createBlankTheme}
                 className="bg-surface-container-lowest border-2 border-dashed border-outline-variant/60 rounded-2xl overflow-hidden shadow-sm hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer group flex flex-col justify-center items-center p-6 h-[300px]"
@@ -456,12 +390,12 @@ export default function AssetsView() {
                 <p className="text-xs text-secondary text-center mt-2 px-2">从零开始配置专属排版样式</p>
               </motion.div>
 
-              {customThemes.map((item) => {
+              {visibleThemes.map((item) => {
                 const config = JSON.parse(item.config);
                 return (
-                  <motion.div 
+                  <motion.div
                     layout
-                    key={item.id} 
+                    key={item.id}
                     className="bg-surface-container-lowest border border-outline-variant rounded-2xl overflow-hidden shadow-sm hover:shadow-2xl transition-all group relative flex flex-col"
                   >
                     <div className="p-4 bg-surface-container-low/30 flex justify-center cursor-pointer" onClick={() => editTheme(item)}>
@@ -478,10 +412,10 @@ export default function AssetsView() {
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); deleteTheme(item.id); }} className="p-2 text-secondary hover:text-error hover:bg-error-container/20 rounded-full transition-all opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
                       </div>
-                      
+
                       <div className="grid grid-cols-1 gap-2 mt-auto">
                         <button onClick={() => editTheme(item)} className="flex items-center justify-center gap-2 py-2.5 bg-surface-container text-primary rounded-xl text-xs font-bold hover:bg-primary/10 transition-all border border-primary/20"><Copy size={14} /> 复制并编辑</button>
-                        <button onClick={() => { 
+                        <button onClick={() => {
                           const exportUrl = `${window.location.origin}/api/custom-themes/${item.id}/export`;
                           window.location.href = `legado://import/readConfig?src=${encodeURIComponent(exportUrl)}`;
                         }} className="flex items-center justify-center gap-2 py-2.5 bg-primary text-on-primary rounded-xl text-xs font-bold hover:opacity-90 transition-all shadow-md shadow-primary/20"><Download size={14} /> 一键导入</button>
@@ -495,10 +429,11 @@ export default function AssetsView() {
         </div>
       )}
 
+      </div></div>
       {/* 定制沙盒 */}
       <AnimatePresence>
         {sandboxConfig && (
-          <div 
+          <div
             onClick={(e) => e.target === e.currentTarget && setSandboxConfig(null)}
             className="fixed inset-0 z-70 flex items-center justify-center p-6 bg-on-background/60 backdrop-blur-md"
           >
